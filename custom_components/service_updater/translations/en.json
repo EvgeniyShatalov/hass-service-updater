@@ -1,0 +1,52 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Service Updater — SSH Key",
+        "description": "Status: {status}.\nPath: {path}\n\n{instruction}",
+        "data": {
+          "public_key": "Public key",
+          "action": "Action"
+        }
+      },
+      "connection": {
+        "title": "Host settings",
+        "description": "User is root. Enter IP and port. Checks will be performed: ping and TCP.",
+        "data": {
+          "app": "Application",
+          "host": "IP address or host",
+          "ssh_port": "SSH port",
+          "scan_interval_hours": "Check interval (hours)"
+        }
+      },
+      "show_command": {
+        "title": "Add SSH key and NOPASSWD",
+        "description": "{instruction}",
+        "data": {
+          "action": "Action (check or finish)"
+        }
+      }
+    },
+    "error": {
+      "cannot_ping": "Host does not respond to ping. Check IP and network.",
+      "cannot_connect_ssh": "SSH port is closed or unreachable. Check sshd and firewall.",
+      "ssh_auth_failed": "SSH key rejected by host. Ensure the public key is added to /root/.ssh/authorized_keys.",
+      "keygen_failed": "Failed to generate SSH key.",
+      "no_key": "SSH key not created yet. Click Generate."
+    },
+    "abort": {
+      "already_configured": "This host with this app is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Update check interval",
+        "description": "{app} on {host}. Default {default} h. Range {min}–{max} h.",
+        "data": {
+          "scan_interval_hours": "Interval (hours)"
+        }
+      }
+    }
+  }
+}
