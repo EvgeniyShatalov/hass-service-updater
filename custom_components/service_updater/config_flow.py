@@ -220,17 +220,17 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
-        return ServiceUpdaterOptionsFlow(config_entry)
+        # ВАЖНО: Возвращаем класс без аргументов (исправление ошибки 500)
+        return ServiceUpdaterOptionsFlow()
+
 
 class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
-    def __init__(self, config_entry):
-        self.config_entry = config_entry
+    # ВАЖНО: Удален метод __init__, HA сам передает self.config_entry
 
     async def async_step_init(self, user_input=None) -> FlowResult:
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        # Текущие значения
         current_interval = self.config_entry.options.get(
             CONF_SCAN_INTERVAL_HOURS,
             self.config_entry.data.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS),
