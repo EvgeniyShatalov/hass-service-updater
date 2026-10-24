@@ -20,7 +20,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
-    def __init__(self, hass: HomeAssistant, entry_data: dict, interval_hours: int) -> None:
+    def __init__(self, hass: HomeAssistant, entry_data: dict, interval_hours: int | None, check_time: str | None) -> None:
         self.entry_data = entry_data
         self.app: str = entry_data.get(CONF_APP, "")
         self.adapter: ServiceAdapter = ADAPTERS[self.app]
@@ -28,7 +28,11 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         self.ssh_user: str = entry_data.get(CONF_SSH_USER, DEFAULT_SSH_USER)
         self.ssh_port: int = int(entry_data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT))
         self.session = async_get_clientsession(hass)
-        self._interval = timedelta(hours=interval_hours)
+        
+        # Если задано конкретное время, отключаем интервал
+        self._interval = timedelta(hours=interval_hours) if interval_hours else None
+        self._check_time = check_time
+
         self._last_debian_upgrade: dict | None = None
         self._upgrade_history: list[dict] = []
 
@@ -36,11 +40,26 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
 
     async def _async_update_data(self) -> dict:
         now = datetime.now(timezone.utc)
+        
+        # Для next_check рассчитываем время
+        if self._interval:
+            next_check_dt = now + self._interval
+            next_check_iso = next_check_dt.isoformat()
+        elif self._check_time:
+            # Грубая оценка следующей проверки (сегодня или завтра)
+            h, m, s = map(int, self._check_time.split(":"))
+            next_check_dt = now.replace(hour=h, minute=m, second=s, microsecond=0)
+            if next_check_dt <= now:
+                next_check_dt += timedelta(days=1)
+            next_check_iso = next_check_dt.isoformat()
+        else:
+            next_check_iso = None
+
         data: dict = {
             "host": self.host,
             "app": self.app,
             "last_check": now.isoformat(),
-            "next_check": (now + self._interval).isoformat(),
+            "next_check": next_check_iso,
             "debian_last_upgrade": self._last_debian_upgrade,
             "debian_upgrade_history": self._upgrade_history,
         }

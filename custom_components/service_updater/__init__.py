@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
@@ -10,17 +11,18 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_time_change
 
 from .const import (
     ATTR_ENTRY_ID, ATTR_HOST, CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS,
     DOMAIN, SERVICE_INSTALL_APP, SERVICE_INSTALL_DEBIAN,
-    INSTALL_DEBIAN_TIMEOUT, INSTALL_APP_TIMEOUT,
+    INSTALL_DEBIAN_TIMEOUT, INSTALL_APP_TIMEOUT, CONF_CHECK_TIME,
 )
 from .coordinator import ServiceUpdaterCoordinator
 from .update import install_app, install_debian
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.UPDATE, Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.UPDATE, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON]
 
 SERVICE_SCHEMA = vol.Schema({vol.Optional(ATTR_ENTRY_ID): cv.string, vol.Optional(ATTR_HOST): cv.string})
 
@@ -75,10 +77,27 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    # Читаем настройки
     interval_hours = entry.options.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
-    coordinator = ServiceUpdaterCoordinator(hass, entry.data, interval_hours)
+    check_time = entry.options.get(CONF_CHECK_TIME)
+    
+    # Если задано точное время, интервал не используется
+    if check_time:
+        interval_hours = None
+
+    coordinator = ServiceUpdaterCoordinator(hass, entry.data, interval_hours, check_time)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+
+    # Если задано точное время, ставим триггер
+    if check_time:
+        try:
+            h, m, s = map(int, check_time.split(":"))
+            entry.async_on_unload(
+                async_track_time_change(hass, coordinator.async_refresh, h, m, s)
+            )
+        except Exception as e:
+            _LOGGER.error("Ошибка парсинга времени проверки %s: %s", check_time, e)
 
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_options))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

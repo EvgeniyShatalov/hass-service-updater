@@ -7,6 +7,7 @@ CONF_SSH_USER = "ssh_user"
 CONF_SSH_PORT = "ssh_port"
 CONF_COMPOSE_DIR = "compose_dir"
 CONF_SCAN_INTERVAL_HOURS = "scan_interval_hours"
+CONF_CHECK_TIME = "check_time"  # Новое: конкретное время проверки (HH:MM:SS)
 
 SERVICE_INSTALL_DEBIAN = "install_debian"
 SERVICE_INSTALL_APP = "install_app"

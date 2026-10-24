@@ -4,47 +4,36 @@
       "user": {
         "title": "Service Updater — SSH-ключ",
         "description": "Статус: {status}.\nПуть: {path}\n\n{instruction}",
-        "data": {
-          "public_key": "Публичный ключ",
-          "action": "Действие"
-        }
+        "data": { "public_key": "Публичный ключ", "action": "Действие" }
       },
       "connection": {
         "title": "Параметры хоста",
         "description": "Пользователь — root. Введите IP и порт. Будут выполнены проверки: ping и TCP.",
-        "data": {
-          "app": "Приложение",
-          "host": "IP-адрес или хост",
-          "ssh_port": "SSH-порт",
-          "scan_interval_hours": "Интервал проверки (часы)"
-        }
+        "data": { "app": "Приложение", "host": "IP-адрес", "ssh_port": "SSH-порт", "scan_interval_hours": "Интервал (часы)" }
       },
       "show_command": {
         "title": "Добавление SSH-ключа и NOPASSWD",
         "description": "{instruction}",
-        "data": {
-          "action": "Действие (check или finish)"
-        }
+        "data": { "action": "Действие" }
       }
     },
     "error": {
-      "cannot_ping": "Хост не отвечает на ping. Проверьте IP и сеть.",
-      "cannot_connect_ssh": "Порт SSH закрыт или недоступен. Проверьте sshd и firewall.",
-      "ssh_auth_failed": "SSH-ключ не принят хостом. Убедитесь, что публичный ключ добавлен в /root/.ssh/authorized_keys.",
+      "cannot_ping": "Хост не отвечает на ping.",
+      "cannot_connect_ssh": "Порт SSH закрыт.",
+      "ssh_auth_failed": "SSH-ключ не принят.",
       "keygen_failed": "Не удалось сгенерировать SSH-ключ.",
-      "no_key": "SSH-ключ ещё не создан. Нажмите «Сгенерировать»."
+      "no_key": "SSH-ключ не создан."
     },
-    "abort": {
-      "already_configured": "Этот хост с этим приложением уже настроен"
-    }
+    "abort": { "already_configured": "Уже настроено" }
   },
   "options": {
     "step": {
       "init": {
         "title": "Периодичность проверки",
-        "description": "{app} на {host}. По умолчанию {default} ч. Диапазон {min}–{max} ч.",
+        "description": "{app} на {host}.\nЕсли указать время (например, 03:00), проверка будет строго в это время каждый день.\nЕсли оставить пустым — будет использоваться интервал.",
         "data": {
-          "scan_interval_hours": "Интервал (часы)"
+          "check_time": "Время проверки (ЧЧ:ММ:СС)",
+          "scan_interval_hours": "Интервал (часы), если время не задано"
         }
       }
     }

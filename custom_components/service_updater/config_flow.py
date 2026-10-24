@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 import voluptuous as vol
+from homeassistant.helpers import selector
 
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -16,6 +17,7 @@ from .const import (
     CONF_SSH_PORT, CONF_SSH_USER, DEFAULT_COMPOSE_DIR, DEFAULT_SCAN_INTERVAL_HOURS,
     DEFAULT_SSH_PORT, DEFAULT_SSH_USER, DOMAIN, SCAN_INTERVAL_MAX_HOURS,
     SCAN_INTERVAL_MIN_HOURS, SSH_KEY_DIR, SSH_PRIVATE_KEY, SSH_PUBLIC_KEY,
+    CONF_CHECK_TIME,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -228,10 +230,13 @@ class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        current = self.config_entry.options.get(
+        # Текущие значения
+        current_interval = self.config_entry.options.get(
             CONF_SCAN_INTERVAL_HOURS,
             self.config_entry.data.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS),
         )
+        current_time = self.config_entry.options.get(CONF_CHECK_TIME)
+
         return self.async_show_form(
             step_id="init",
             description_placeholders={
@@ -242,7 +247,8 @@ class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
                 "max": SCAN_INTERVAL_MAX_HOURS,
             },
             data_schema=vol.Schema({
-                vol.Required(CONF_SCAN_INTERVAL_HOURS, default=current):
+                vol.Optional(CONF_CHECK_TIME, description={"suggested_value": current_time}): selector.TimeSelector(),
+                vol.Optional(CONF_SCAN_INTERVAL_HOURS, default=current_interval):
                     vol.All(int, vol.Range(min=SCAN_INTERVAL_MIN_HOURS, max=SCAN_INTERVAL_MAX_HOURS)),
             }),
         )
