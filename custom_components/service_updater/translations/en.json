@@ -11,40 +11,43 @@
       },
       "connection": {
         "title": "Host settings",
-        "description": "User is root. Enter IP and port. Checks will be performed: ping and TCP.",
+        "description": "Enter IP and port. User defaults to root.",
         "data": {
           "app": "Application",
-          "host": "IP address or host",
+          "host": "IP address",
+          "ssh_user": "SSH user",
           "ssh_port": "SSH port",
-          "scan_interval_hours": "Check interval (hours)"
+          "scan_interval_hours": "Interval (hours)"
         }
       },
       "show_command": {
-        "title": "Add SSH key and NOPASSWD",
+        "title": "Command to add SSH key",
         "description": "{instruction}",
         "data": {
-          "action": "Action (check or finish)"
+          "full_command": "Command (click here and press Ctrl+A, Ctrl+C)",
+          "action": "Action"
         }
       }
     },
     "error": {
-      "cannot_ping": "Host does not respond to ping. Check IP and network.",
-      "cannot_connect_ssh": "SSH port is closed or unreachable. Check sshd and firewall.",
-      "ssh_auth_failed": "SSH key rejected by host. Ensure the public key is added to /root/.ssh/authorized_keys.",
+      "cannot_ping": "Host does not respond to ping.",
+      "cannot_connect_ssh": "SSH port is closed.",
+      "ssh_auth_failed": "SSH key rejected.",
       "keygen_failed": "Failed to generate SSH key.",
-      "no_key": "SSH key not created yet. Click Generate."
+      "no_key": "SSH key not created."
     },
     "abort": {
-      "already_configured": "This host with this app is already configured"
+      "already_configured": "Already configured"
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Update check interval",
-        "description": "{app} on {host}. Default {default} h. Range {min}–{max} h.",
+        "description": "{app} on {host}.\nIf time is set, it will check exactly at this time every day.\nIf left empty, interval will be used.",
         "data": {
-          "scan_interval_hours": "Interval (hours)"
+          "check_time": "Check time (HH:MM:SS)",
+          "scan_interval_hours": "Interval (hours) if time is not set"
         }
       }
     }

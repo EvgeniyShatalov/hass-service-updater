@@ -7,6 +7,7 @@ from pathlib import Path
 
 import voluptuous as vol
 from homeassistant.helpers import selector
+from homeassistant.components import persistent_notification
 
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -28,9 +29,11 @@ APPS = {
     "frigate": "Frigate (Docker)",
 }
 
+
 def _key_paths(hass) -> tuple[Path, Path]:
     base = Path(hass.config.path(SSH_KEY_DIR))
     return base / SSH_PRIVATE_KEY, base / SSH_PUBLIC_KEY
+
 
 async def _generate_keypair(hass) -> str:
     priv, pub = _key_paths(hass)
@@ -39,7 +42,8 @@ async def _generate_keypair(hass) -> str:
         return pub.read_text()
 
     proc = await asyncio.create_subprocess_exec(
-        "ssh-keygen", "-t", "ed25519", "-f", str(priv), "-N", "", "-C", "home-assistant@service-updater",
+        "ssh-keygen", "-t", "ed25519", "-f", str(priv), "-N", "",
+        "-C", "home-assistant@service-updater",
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
     _, err = await proc.communicate()
@@ -47,6 +51,7 @@ async def _generate_keypair(hass) -> str:
         raise RuntimeError(err.decode(errors="ignore").strip())
     priv.chmod(0o600)
     return pub.read_text()
+
 
 async def _ping_host(host: str) -> bool:
     try:
@@ -60,15 +65,19 @@ async def _ping_host(host: str) -> bool:
         _LOGGER.debug("Ping failed for %s: %s", host, exc)
         return False
 
+
 async def _tcp_check(host: str, port: int) -> bool:
     try:
-        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=5
+        )
         writer.close()
         await writer.wait_closed()
         return True
     except Exception as exc:
         _LOGGER.debug("TCP %s:%d failed: %s", host, port, exc)
         return False
+
 
 async def _ssh_key_auth(host: str, port: int, user: str, key: Path) -> bool:
     try:
@@ -83,6 +92,7 @@ async def _ssh_key_auth(host: str, port: int, user: str, key: Path) -> bool:
     except Exception as exc:
         _LOGGER.debug("SSH key auth failed: %s", exc)
         return False
+
 
 class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -111,7 +121,9 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema({
             vol.Optional("public_key", default=public_key or "Ключ не создан"): str,
-            vol.Optional("action", default="continue"): vol.In(["continue"] + ([] if has_key else ["generate"])),
+            vol.Optional("action", default="continue"): vol.In(
+                ["continue"] + ([] if has_key else ["generate"])
+            ),
         })
 
         return self.async_show_form(
@@ -120,8 +132,9 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "status": "Ключ найден" if has_key else "Ключ не найден",
                 "path": str(pub),
                 "instruction": (
-                    "Сгенерируйте SSH-ключ кнопкой «generate», чтобы продолжить." if not has_key
-                    else "Нажмите «continue», чтобы перейти к добавлению хоста."
+                    "Сгенерируйте SSH-ключ кнопкой «generate», чтобы продолжить."
+                    if not has_key else
+                    "Нажмите «continue», чтобы перейти к добавлению хоста."
                 ),
             },
         )
@@ -133,6 +146,7 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             host = user_input[CONF_HOST]
             ssh_port = int(user_input[CONF_SSH_PORT])
             app = user_input[CONF_APP]
+            ssh_user = user_input[CONF_SSH_USER]
 
             if not await _ping_host(host):
                 errors["base"] = "cannot_ping"
@@ -141,20 +155,27 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 self._app = app
                 self._host = host
-                self._ssh_user = DEFAULT_SSH_USER
+                self._ssh_user = ssh_user
                 self._ssh_port = ssh_port
-                self._interval = user_input.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
+                self._interval = user_input.get(
+                    CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS
+                )
                 return await self.async_step_show_command()
 
         schema = vol.Schema({
             vol.Required(CONF_APP): vol.In(APPS),
             vol.Required(CONF_HOST): str,
+            vol.Required(CONF_SSH_USER, default=DEFAULT_SSH_USER): str,
             vol.Required(CONF_SSH_PORT, default=DEFAULT_SSH_PORT): int,
             vol.Optional(CONF_SCAN_INTERVAL_HOURS, default=DEFAULT_SCAN_INTERVAL_HOURS):
-                vol.All(int, vol.Range(min=SCAN_INTERVAL_MIN_HOURS, max=SCAN_INTERVAL_MAX_HOURS)),
+                vol.All(int, vol.Range(
+                    min=SCAN_INTERVAL_MIN_HOURS, max=SCAN_INTERVAL_MAX_HOURS,
+                )),
         })
 
-        return self.async_show_form(step_id="connection", data_schema=schema, errors=errors)
+        return self.async_show_form(
+            step_id="connection", data_schema=schema, errors=errors
+        )
 
     async def async_step_show_command(self, user_input=None) -> FlowResult:
         errors: dict[str, str] = {}
@@ -171,25 +192,45 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self._create_entry()
 
         if self._app == "torrserver":
-            sudo_cmd = "/usr/bin/apt-get update, /usr/bin/apt-get upgrade, /usr/bin/systemctl restart torrserver.service"
+            sudo_cmd = (
+                "/usr/bin/apt-get update, /usr/bin/apt-get upgrade, "
+                "/usr/bin/systemctl restart torrserver.service"
+            )
         elif self._app == "cloudpub":
-            sudo_cmd = "/usr/bin/apt-get update, /usr/bin/apt-get upgrade, /usr/bin/systemctl restart cloudpub.service"
+            sudo_cmd = (
+                "/usr/bin/apt-get update, /usr/bin/apt-get upgrade, "
+                "/usr/bin/systemctl restart cloudpub.service"
+            )
         else:
-            sudo_cmd = "/usr/bin/apt-get update, /usr/bin/apt-get upgrade, /usr/bin/docker compose"
+            sudo_cmd = (
+                "/usr/bin/apt-get update, /usr/bin/apt-get upgrade, "
+                "/usr/bin/docker compose"
+            )
 
-        instruction = (
-            f"1. Зайдите по SSH на хост {self._host} под пользователем root.\n"
-            f"2. Скопируйте и выполните команды:\n\n"
-            f"mkdir -p /root/.ssh && chmod 700 /root/.ssh\n"
-            f"echo '{public_key}' >> /root/.ssh/authorized_keys\n"
-            f"chmod 600 /root/.ssh/authorized_keys\n\n"
-            f"echo 'root ALL=(ALL) NOPASSWD: {sudo_cmd}' | sudo tee /etc/sudoers.d/ha-service-updater\n"
-            f"sudo chmod 440 /etc/sudoers.d/ha-service-updater\n\n"
-            f"3. Нажмите «Проверить подключение».\n"
-            f"4. Если проверка прошла — запись создастся. Если нет — исправьте ошибку."
+        full_command = (
+            f"mkdir -p ~/.ssh && chmod 700 ~/.ssh\n"
+            f"echo '{public_key}' >> ~/.ssh/authorized_keys\n"
+            f"chmod 600 ~/.ssh/authorized_keys\n\n"
+            f"echo '{self._ssh_user} ALL=(ALL) NOPASSWD: {sudo_cmd}' "
+            "| sudo tee /etc/sudoers.d/ha-service-updater\n"
+            "sudo chmod 440 /etc/sudoers.d/ha-service-updater"
+        )
+
+        persistent_notification.async_create(
+            self.hass,
+            title=f"Service Updater: команда для {self._host}",
+            message=(
+                f"Скопируйте этот блок и выполните на хосте `{self._host}`:\n\n"
+                f"```bash\n{full_command}\n```\n\n"
+                f"После выполнения вернитесь в окно настройки и нажмите «Проверить подключение»."
+            ),
+            notification_id=f"service_updater_setup_{self._host}",
         )
 
         schema = vol.Schema({
+            vol.Optional("full_command", default=full_command): selector.TextSelector(
+                selector.TextSelectorConfig(multiline=True)
+            ),
             vol.Optional("action", default="check"): vol.In(["check", "finish"]),
         })
 
@@ -197,17 +238,30 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="show_command",
             data_schema=schema,
             errors=errors,
-            description_placeholders={"instruction": instruction},
+            description_placeholders={
+                "host": self._host,
+                "instruction": (
+                    "1. Кликните в поле с командой ниже, нажмите Ctrl+A (выделить всё) и Ctrl+C (скопировать).\n"
+                    "2. Выполните скопированную команду на вашем сервере.\n"
+                    "3. Вернитесь сюда и нажмите «Отправить» с действием «check»."
+                ),
+            },
         )
 
     async def _create_entry(self) -> FlowResult:
-        await self.async_set_unique_id(f"{self._app}_{self._ssh_user}@{self._host}:{self._ssh_port}")
+        await self.async_set_unique_id(
+            f"{self._app}_{self._ssh_user}@{self._host}:{self._ssh_port}"
+        )
         self._abort_if_unique_id_configured()
+
+        persistent_notification.async_dismiss(
+            self.hass, f"service_updater_setup_{self._host}"
+        )
 
         data = {
             CONF_APP: self._app,
             CONF_HOST: self._host,
-            CONF_SSH_USER: DEFAULT_SSH_USER,
+            CONF_SSH_USER: self._ssh_user,
             CONF_SSH_PORT: self._ssh_port,
             CONF_SCAN_INTERVAL_HOURS: self._interval,
         }
@@ -220,20 +274,19 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
-        # ВАЖНО: Возвращаем класс без аргументов (исправление ошибки 500)
         return ServiceUpdaterOptionsFlow()
 
 
 class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
-    # ВАЖНО: Удален метод __init__, HA сам передает self.config_entry
-
     async def async_step_init(self, user_input=None) -> FlowResult:
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
         current_interval = self.config_entry.options.get(
             CONF_SCAN_INTERVAL_HOURS,
-            self.config_entry.data.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS),
+            self.config_entry.data.get(
+                CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS
+            ),
         )
         current_time = self.config_entry.options.get(CONF_CHECK_TIME)
 
@@ -247,8 +300,12 @@ class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
                 "max": SCAN_INTERVAL_MAX_HOURS,
             },
             data_schema=vol.Schema({
-                vol.Optional(CONF_CHECK_TIME, description={"suggested_value": current_time}): selector.TimeSelector(),
+                vol.Optional(
+                    CONF_CHECK_TIME, description={"suggested_value": current_time}
+                ): selector.TimeSelector(),
                 vol.Optional(CONF_SCAN_INTERVAL_HOURS, default=current_interval):
-                    vol.All(int, vol.Range(min=SCAN_INTERVAL_MIN_HOURS, max=SCAN_INTERVAL_MAX_HOURS)),
+                    vol.All(int, vol.Range(
+                        min=SCAN_INTERVAL_MIN_HOURS, max=SCAN_INTERVAL_MAX_HOURS,
+                    )),
             }),
         )
