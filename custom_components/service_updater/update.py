@@ -17,16 +17,21 @@ from .adapters import ADAPTERS
 from .const import (
     CONF_APP, CONF_COMPOSE_DIR, CONF_HOST, CONF_SSH_PORT, CONF_SSH_USER,
     DEFAULT_COMPOSE_DIR, DEFAULT_SSH_PORT, DOMAIN,
+    SSH_KEY_DIR, SSH_PRIVATE_KEY,
 )
 from .coordinator import ServiceUpdaterCoordinator
+
+def _key_path(hass: HomeAssistant) -> str:
+    return str(hass.config.path(SSH_KEY_DIR, SSH_PRIVATE_KEY))
 
 
 async def ssh_exec(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, timeout: int = 60) -> str:
     ssh_user = entry.data.get(CONF_SSH_USER, "root")
     ssh_port = int(entry.data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT))
     host = entry.data.get(CONF_HOST)
+    key = _key_path(hass)
     cmd = [
-        "ssh", "-p", str(ssh_port), "-o", "BatchMode=yes",
+        "ssh", "-p", str(ssh_port), "-i", key, "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10",
         f"{ssh_user}@{host}", remote_cmd,
     ]
@@ -38,12 +43,12 @@ async def ssh_exec(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, tim
 
 
 async def ssh_exec_with_stdin(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, input_data: bytes, timeout: int = 120) -> str:
-    """Выполняет SSH-команду и передает данные в stdin (решает ошибку Argument list too long)."""
     ssh_user = entry.data.get(CONF_SSH_USER, "root")
     ssh_port = int(entry.data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT))
     host = entry.data.get(CONF_HOST)
+    key = _key_path(hass)
     cmd = [
-        "ssh", "-p", str(ssh_port), "-o", "BatchMode=yes",
+        "ssh", "-p", str(ssh_port), "-i", key, "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10",
         f"{ssh_user}@{host}", remote_cmd,
     ]

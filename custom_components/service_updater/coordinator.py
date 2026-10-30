@@ -9,12 +9,14 @@ import aiohttp
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .adapters import ADAPTERS, ServiceAdapter
 from .const import (
     CONF_APP, CONF_HOST, CONF_SSH_PORT, CONF_SSH_USER,
     DEFAULT_SSH_PORT, DEFAULT_SSH_USER, DOMAIN,
     PROGRAM_CHECK_TIMEOUT, DEBIAN_CHECK_TIMEOUT,
+    SSH_KEY_DIR, SSH_PRIVATE_KEY,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,7 +31,6 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         self.ssh_port: int = int(entry_data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT))
         self.session = async_get_clientsession(hass)
         
-        # Если задано конкретное время, отключаем интервал
         self._interval = timedelta(hours=interval_hours) if interval_hours else None
         self._check_time = check_time
 
@@ -39,26 +40,28 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         super().__init__(hass, _LOGGER, name=f"{DOMAIN}_{self.app}", update_interval=self._interval)
 
     async def _async_update_data(self) -> dict:
-        now = datetime.now(timezone.utc)
+        now_local = dt_util.now()
+        now_utc = datetime.now(timezone.utc)
         
-        # Для next_check рассчитываем время
         if self._interval:
-            next_check_dt = now + self._interval
+            next_check_dt = now_local + self._interval
             next_check_iso = next_check_dt.isoformat()
         elif self._check_time:
-            # Грубая оценка следующей проверки (сегодня или завтра)
-            h, m, s = map(int, self._check_time.split(":"))
-            next_check_dt = now.replace(hour=h, minute=m, second=s, microsecond=0)
-            if next_check_dt <= now:
-                next_check_dt += timedelta(days=1)
-            next_check_iso = next_check_dt.isoformat()
+            try:
+                h, m, s = map(int, self._check_time.split(":"))
+                next_check_dt = now_local.replace(hour=h, minute=m, second=s, microsecond=0)
+                if next_check_dt <= now_local:
+                    next_check_dt += timedelta(days=1)
+                next_check_iso = next_check_dt.isoformat()
+            except ValueError:
+                next_check_iso = None
         else:
             next_check_iso = None
 
         data: dict = {
             "host": self.host,
             "app": self.app,
-            "last_check": now.isoformat(),
+            "last_check": now_utc.isoformat(),
             "next_check": next_check_iso,
             "debian_last_upgrade": self._last_debian_upgrade,
             "debian_upgrade_history": self._upgrade_history,
@@ -155,8 +158,9 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         return result
 
     async def ssh_exec(self, remote_cmd: str, timeout: int = 30) -> str:
+        key = str(self.hass.config.path(SSH_KEY_DIR, SSH_PRIVATE_KEY))
         cmd = [
-            "ssh", "-p", str(self.ssh_port), "-o", "BatchMode=yes",
+            "ssh", "-p", str(self.ssh_port), "-i", key, "-o", "BatchMode=yes",
             "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10",
             f"{self.ssh_user}@{self.host}", remote_cmd,
         ]
