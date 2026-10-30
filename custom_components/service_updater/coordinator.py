@@ -137,24 +137,26 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         adapter = self.adapter
         key = self.app
         result: dict = {}
+        current = "unknown"
 
-        if adapter.version_url_path:
-            current = await adapter.get_local_version(self.session, self.host, adapter.default_port)
-        elif key == "cloudpub":
-            # Получаем строку вида "cloudpub-client 3.7.937-20261022201431-stable"
-            raw_version = (await self.ssh_exec("clo --version")).strip()
-            # Вытаскиваем только цифры версии (3.7.937)
-            match = re.search(r'(\d+\.\d+\.\d+)', raw_version)
-            current = match.group(1) if match else raw_version
-        else:
+        try:
+            if adapter.version_url_path:
+                current = await adapter.get_local_version(self.session, self.host, adapter.default_port)
+            elif key == "cloudpub":
+                # Явно указываем полный путь к бинарнику на всякий случай
+                raw_version = (await self.ssh_exec("/usr/local/bin/clo --version")).strip()
+                # Вытаскиваем только цифры версии (3.7.937)
+                match = re.search(r'(\d+\.\d+\.\d+)', raw_version)
+                current = match.group(1) if match else raw_version
+        except Exception as ex:
+            _LOGGER.warning("Не удалось получить текущую версию %s: %s", key, ex)
             current = "unknown"
 
         api = f"https://api.github.com/repos/{adapter.github_repo}/releases/latest"
         async with self.session.get(api, timeout=10) as resp:
             rel = await resp.json()
         
-        # Вытаскиваем версию из тега GitHub (например, v3.7.937 -> 3.7.937)
-        latest_tag = rel["tag_name"]
+        latest_tag = rel.get("tag_name", "0.0.0")
         latest_match = re.search(r'(\d+\.\d+\.\d+)', latest_tag)
         latest = latest_match.group(1) if latest_match else latest_tag
 
@@ -162,11 +164,14 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         result[f"{key}_latest"] = latest
         result[f"{key}_release_url"] = rel.get("html_url")
         
-        # Сравниваем только отфильтрованные цифры
-        current_clean = current.lstrip("v").split("-")[0]
-        latest_clean = latest.lstrip("v").split("-")[0]
-        
-        result[f"{key}_update_available"] = current_clean != latest_clean
+        # Сравниваем только отфильтрованные цифры, если версия получена
+        if current != "unknown":
+            current_clean = current.lstrip("v").split("-")[0]
+            latest_clean = latest.lstrip("v").split("-")[0]
+            result[f"{key}_update_available"] = current_clean != latest_clean
+        else:
+            result[f"{key}_update_available"] = False
+
         return result
 
     async def ssh_exec(self, remote_cmd: str, timeout: int = 30) -> str:
