@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 import aiohttp
 
@@ -140,21 +141,32 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         if adapter.version_url_path:
             current = await adapter.get_local_version(self.session, self.host, adapter.default_port)
         elif key == "cloudpub":
-            current = (await self.ssh_exec("clo --version")).strip()
+            # Получаем строку вида "cloudpub-client 3.7.937-20261022201431-stable"
+            raw_version = (await self.ssh_exec("clo --version")).strip()
+            # Вытаскиваем только цифры версии (3.7.937)
+            match = re.search(r'(\d+\.\d+\.\d+)', raw_version)
+            current = match.group(1) if match else raw_version
         else:
             current = "unknown"
 
         api = f"https://api.github.com/repos/{adapter.github_repo}/releases/latest"
         async with self.session.get(api, timeout=10) as resp:
             rel = await resp.json()
-        latest = rel["tag_name"]
+        
+        # Вытаскиваем версию из тега GitHub (например, v3.7.937 -> 3.7.937)
+        latest_tag = rel["tag_name"]
+        latest_match = re.search(r'(\d+\.\d+\.\d+)', latest_tag)
+        latest = latest_match.group(1) if latest_match else latest_tag
 
         result[f"{key}_current"] = current
         result[f"{key}_latest"] = latest
         result[f"{key}_release_url"] = rel.get("html_url")
-        result[f"{key}_update_available"] = (
-            (current or "").lstrip("v").split("-")[0] != latest.lstrip("v").split("-")[0]
-        )
+        
+        # Сравниваем только отфильтрованные цифры
+        current_clean = current.lstrip("v").split("-")[0]
+        latest_clean = latest.lstrip("v").split("-")[0]
+        
+        result[f"{key}_update_available"] = current_clean != latest_clean
         return result
 
     async def ssh_exec(self, remote_cmd: str, timeout: int = 30) -> str:

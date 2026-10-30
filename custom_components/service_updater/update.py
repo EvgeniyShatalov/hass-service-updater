@@ -46,12 +46,16 @@ async def ssh_exec(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, tim
 async def install_debian(hass: HomeAssistant, entry: ConfigEntry, coordinator: ServiceUpdaterCoordinator) -> None:
     host = entry.data.get(CONF_HOST)
     data = coordinator.data or {}
+    
     if not data.get("debian_update_available"):
         return
+        
     packages = data.get("apt_pending_packages", [])
+    
     try:
         await ssh_exec(hass, entry, "sudo -n DEBIAN_FRONTEND=noninteractive apt-get upgrade -y", timeout=600)
         coordinator.record_debian_upgrade(packages)
+        
         persistent_notification.async_create(
             hass,
             f"Система **Debian** на хосте `{host}` успешно обновлена.\nОбновлено пакетов: {len(packages)}.",
@@ -66,12 +70,15 @@ async def install_debian(hass: HomeAssistant, entry: ConfigEntry, coordinator: S
             notification_id=f"update_error_debian_{host}"
         )
         raise
+    finally:
+        await coordinator.async_refresh()
 
 
 async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: ServiceUpdaterCoordinator) -> None:
     app = entry.data.get(CONF_APP, "")
     host = entry.data.get(CONF_HOST)
     data = coordinator.data or {}
+    
     if not data.get(f"{app}_update_available"):
         return
 
@@ -81,32 +88,39 @@ async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: Serv
         raise HomeAssistantError(f"Неизвестная последняя версия {app}")
 
     try:
-        # --- Логика для TorrServer (официальный скрипт) ---
+        # --- Логика для TorrServer (через официальный скрипт) ---
         if app == "torrserver":
             remote_cmd = (
                 "curl -s https://raw.githubusercontent.com/YouROK/TorrServer/master/installTorrServerLinux.sh | "
                 "sudo bash -s -- --update --silent"
             )
             await ssh_exec(hass, entry, remote_cmd, timeout=300)
+            
+            # Ждем 15 секунд, чтобы служба перезапустилась и отдала новую версию
+            await asyncio.sleep(15)
 
-        # --- Логика для Frigate (Docker Compose) ---
+        # --- Логика для Frigate (через Docker Compose) ---
         elif app == "frigate":
             compose_dir = entry.data.get(CONF_COMPOSE_DIR, DEFAULT_COMPOSE_DIR)
             backup = f"tar czf {compose_dir}/config-backup-$(date +%F-%H%M).tar.gz -C {compose_dir} config 2>/dev/null || true"
             await ssh_exec(hass, entry, backup, timeout=120)
             remote = f"cd {compose_dir} && docker compose down frigate && docker compose pull && docker compose up -d"
             await ssh_exec(hass, entry, remote, timeout=900)
+            
+            await asyncio.sleep(10)
 
         # --- Логика для CloudPub (штатная команда CLI) ---
         elif app == "cloudpub":
-            # Выполняем команду обновления. Флаг --silent не нужен, если clo его не поддерживает.
-            # Команда upgrade сама скачает и заменит бинарник.
+            # Выполняем команду обновления через sudo
             await ssh_exec(hass, entry, "sudo clo upgrade", timeout=300)
+            
+            # Ждем 10 секунд, чтобы бинарник обновился
+            await asyncio.sleep(10)
 
         else:
             raise HomeAssistantError(f"Неизвестное приложение {app}")
 
-        # Если ошибок нет — уведомление об успехе
+        # Если дошли сюда — обновление прошло успешно
         persistent_notification.async_create(
             hass,
             f"Приложение **{app.capitalize()}** на хосте `{host}` успешно обновлено до версии `{latest}`.",
@@ -115,6 +129,7 @@ async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: Serv
         )
 
     except Exception as e:
+        # Если произошла ошибка
         persistent_notification.async_create(
             hass,
             f"Ошибка обновления **{app.capitalize()}** на хосте `{host}`:\n```\n{e}\n```",
@@ -124,4 +139,5 @@ async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: Serv
         raise
 
     finally:
-        await coordinator.async_request_refresh()
+        # Принудительно обновляем данные, чтобы сенсоры в HA сразу показали новые версии
+        await coordinator.async_refresh()
