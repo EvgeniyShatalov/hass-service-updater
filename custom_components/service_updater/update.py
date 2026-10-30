@@ -103,7 +103,6 @@ async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: Serv
     if url.endswith(".zip"):
         content = await hass.async_add_executor_job(_extract_from_zip, content, adapter.asset_pattern or "")
 
-    # Передаем бинарник через stdin, чтобы избежать ошибки "Argument list too long"
     tmp = f"{remote_path}.new"
     remote = (
         f"cat > {tmp} && "

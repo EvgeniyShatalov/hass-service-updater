@@ -1,11 +1,6 @@
 install_debian:
   name: Установить обновления Debian
   description: Выполняет apt upgrade на хосте по SSH.
-  target:
-    entity:
-      domain: update
-    device:
-      integration: service_updater
   fields:
     entry_id:
       name: ID записи
@@ -21,11 +16,6 @@ install_debian:
 install_app:
   name: Установить обновление приложения
   description: Обновляет TorrServer / CloudPub / Frigate по SSH.
-  target:
-    entity:
-      domain: update
-    device:
-      integration: service_updater
   fields:
     entry_id:
       name: ID записи

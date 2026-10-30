@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
@@ -24,23 +23,35 @@ from .update import install_app, install_debian
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.UPDATE, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON]
 
-SERVICE_SCHEMA = vol.Schema({vol.Optional(ATTR_ENTRY_ID): cv.string, vol.Optional(ATTR_HOST): cv.string})
+# Разрешаем передавать entity_id и device_id, чтобы HA не выдавал ошибку,
+# если пользователь выберет цель в визуальном интерфейсе.
+SERVICE_SCHEMA = vol.Schema({
+    vol.Optional(ATTR_ENTRY_ID): cv.string,
+    vol.Optional(ATTR_HOST): cv.string,
+    vol.Optional("entity_id"): cv.string,
+    vol.Optional("device_id"): cv.string,
+})
 
 def _select_entries(hass: HomeAssistant, call: ServiceCall) -> list[ConfigEntry]:
     entries = hass.config_entries.async_entries(DOMAIN)
     entry_id = call.data.get(ATTR_ENTRY_ID)
     host = call.data.get(ATTR_HOST)
+    
+    entity_id = call.data.get("entity_id")
+    device_id = call.data.get("device_id")
 
-    target = call.data.get("target") or {}
-    entity_ids = target.get("entity_id") or []
-    if isinstance(entity_ids, str):
-        entity_ids = [entity_ids]
-    if entity_ids and not entry_id and not host:
+    if entity_id and not entry_id and not host:
         reg = er.async_get(hass)
-        for eid in entity_ids:
-            reg_entry = reg.async_get(eid)
-            if reg_entry and reg_entry.config_entry_id:
-                entry_id = reg_entry.config_entry_id
+        reg_entry = reg.async_get(entity_id)
+        if reg_entry and reg_entry.config_entry_id:
+            entry_id = reg_entry.config_entry_id
+            
+    if device_id and not entry_id and not host:
+        dev_reg = er.async_get(hass)
+        entity_entries = er.async_entries_for_device(dev_reg, device_id)
+        for ent in entity_entries:
+            if ent.config_entry_id:
+                entry_id = ent.config_entry_id
                 break
 
     if entry_id:
@@ -77,11 +88,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    # Читаем настройки
     interval_hours = entry.options.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
     check_time = entry.options.get(CONF_CHECK_TIME)
     
-    # Если задано точное время, интервал не используется
     if check_time:
         interval_hours = None
 
@@ -89,7 +98,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
-    # Если задано точное время, ставим триггер
     if check_time:
         try:
             h, m, s = map(int, check_time.split(":"))
