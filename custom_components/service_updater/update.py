@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import io
 import zipfile
 from typing import Any
@@ -21,6 +20,7 @@ from .const import (
 )
 from .coordinator import ServiceUpdaterCoordinator
 
+
 async def ssh_exec(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, timeout: int = 60) -> str:
     ssh_user = entry.data.get(CONF_SSH_USER, "root")
     ssh_port = int(entry.data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT))
@@ -36,6 +36,29 @@ async def ssh_exec(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, tim
         raise HomeAssistantError(f"SSH {host}: {err.decode(errors='ignore').strip()}")
     return out.decode(errors="ignore")
 
+
+async def ssh_exec_with_stdin(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, input_data: bytes, timeout: int = 120) -> str:
+    """Выполняет SSH-команду и передает данные в stdin (решает ошибку Argument list too long)."""
+    ssh_user = entry.data.get(CONF_SSH_USER, "root")
+    ssh_port = int(entry.data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT))
+    host = entry.data.get(CONF_HOST)
+    cmd = [
+        "ssh", "-p", str(ssh_port), "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10",
+        f"{ssh_user}@{host}", remote_cmd,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, 
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, 
+        stderr=asyncio.subprocess.PIPE
+    )
+    out, err = await asyncio.wait_for(proc.communicate(input=input_data), timeout=timeout)
+    if proc.returncode != 0:
+        raise HomeAssistantError(f"SSH {host}: {err.decode(errors='ignore').strip()}")
+    return out.decode(errors="ignore")
+
+
 async def install_debian(hass: HomeAssistant, entry: ConfigEntry, coordinator: ServiceUpdaterCoordinator) -> None:
     data = coordinator.data or {}
     if not data.get("debian_update_available"):
@@ -43,6 +66,7 @@ async def install_debian(hass: HomeAssistant, entry: ConfigEntry, coordinator: S
     packages = data.get("apt_pending_packages", [])
     await ssh_exec(hass, entry, "sudo -n DEBIAN_FRONTEND=noninteractive apt-get upgrade -y", timeout=600)
     coordinator.record_debian_upgrade(packages)
+
 
 async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: ServiceUpdaterCoordinator) -> None:
     app = entry.data.get(CONF_APP, "")
@@ -72,20 +96,22 @@ async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: Serv
     else:
         raise HomeAssistantError(f"Неизвестное приложение {app}")
 
-    async with coordinator.session.get(url, timeout=60) as resp:
+    async with coordinator.session.get(url, timeout=120) as resp:
         resp.raise_for_status()
         content = await resp.read()
 
     if url.endswith(".zip"):
         content = await hass.async_add_executor_job(_extract_from_zip, content, adapter.asset_pattern or "")
 
-    b64 = base64.b64encode(content).decode()
+    # Передаем бинарник через stdin, чтобы избежать ошибки "Argument list too long"
     tmp = f"{remote_path}.new"
     remote = (
-        f"echo '{b64}' | base64 -d > {tmp} && chmod +x {tmp} && mv {tmp} {remote_path} && "
+        f"cat > {tmp} && "
+        f"chmod +x {tmp} && mv {tmp} {remote_path} && "
         f"sudo -n systemctl restart {adapter.restart_service}"
     )
-    await ssh_exec(hass, entry, remote, timeout=120)
+    await ssh_exec_with_stdin(hass, entry, remote, content, timeout=300)
+
 
 def _extract_from_zip(content: bytes, pattern: str) -> bytes:
     needle = pattern.split(".")[0].lower()
@@ -95,9 +121,11 @@ def _extract_from_zip(content: bytes, pattern: str) -> bytes:
             raise HomeAssistantError("Бинарник не найден в архиве")
         return zf.read(member)
 
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator: ServiceUpdaterCoordinator = entry.runtime_data
     async_add_entities([ServiceUpdaterUpdateEntity(coordinator, entry)])
+
 
 class ServiceUpdaterUpdateEntity(CoordinatorEntity[ServiceUpdaterCoordinator], UpdateEntity):
     _attr_has_entity_name = True
