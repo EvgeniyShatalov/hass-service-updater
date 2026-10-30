@@ -42,28 +42,6 @@ async def ssh_exec(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, tim
     return out.decode(errors="ignore")
 
 
-async def ssh_exec_with_stdin(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, input_data: bytes, timeout: int = 120) -> str:
-    ssh_user = entry.data.get(CONF_SSH_USER, "root")
-    ssh_port = int(entry.data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT))
-    host = entry.data.get(CONF_HOST)
-    key = _key_path(hass)
-    cmd = [
-        "ssh", "-p", str(ssh_port), "-i", key, "-o", "BatchMode=yes",
-        "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10",
-        f"{ssh_user}@{host}", remote_cmd,
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, 
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE, 
-        stderr=asyncio.subprocess.PIPE
-    )
-    out, err = await asyncio.wait_for(proc.communicate(input=input_data), timeout=timeout)
-    if proc.returncode != 0:
-        raise HomeAssistantError(f"SSH {host}: {err.decode(errors='ignore').strip()}")
-    return out.decode(errors="ignore")
-
-
 async def install_debian(hass: HomeAssistant, entry: ConfigEntry, coordinator: ServiceUpdaterCoordinator) -> None:
     data = coordinator.data or {}
     if not data.get("debian_update_available"):
@@ -84,6 +62,17 @@ async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: Serv
     if not latest:
         raise HomeAssistantError(f"Неизвестная последняя версия {app}")
 
+    # --- Логика для TorrServer (через официальный скрипт) ---
+    if app == "torrserver":
+        # Официальная команда для обновления через установочный скрипт
+        remote_cmd = (
+            "curl -s https://raw.githubusercontent.com/YouROK/TorrServer/master/installTorrServerLinux.sh | "
+            "sudo bash -s -- --update --silent"
+        )
+        await ssh_exec(hass, entry, remote_cmd, timeout=300)
+        return
+
+    # --- Логика для Frigate (через Docker Compose) ---
     if app == "frigate":
         compose_dir = entry.data.get(CONF_COMPOSE_DIR, DEFAULT_COMPOSE_DIR)
         backup = f"tar czf {compose_dir}/config-backup-$(date +%F-%H%M).tar.gz -C {compose_dir} config 2>/dev/null || true"
@@ -92,29 +81,49 @@ async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: Serv
         await ssh_exec(hass, entry, remote, timeout=900)
         return
 
+    # --- Логика для CloudPub (прямое скачивание) ---
     if app == "cloudpub":
         url = f"https://github.com/{adapter.github_repo}/releases/download/{latest}/clo-linux-amd64.zip"
         remote_path = "/usr/local/bin/clo"
-    elif app == "torrserver":
-        url = f"https://github.com/{adapter.github_repo}/releases/download/{latest}/TorrServer-linux-amd64"
-        remote_path = "/opt/torrserver/TorrServer"
-    else:
-        raise HomeAssistantError(f"Неизвестное приложение {app}")
+        
+        async with coordinator.session.get(url, timeout=120) as resp:
+            resp.raise_for_status()
+            content = await resp.read()
 
-    async with coordinator.session.get(url, timeout=120) as resp:
-        resp.raise_for_status()
-        content = await resp.read()
+        if url.endswith(".zip"):
+            content = await hass.async_add_executor_job(_extract_from_zip, content, adapter.asset_pattern or "")
 
-    if url.endswith(".zip"):
-        content = await hass.async_add_executor_job(_extract_from_zip, content, adapter.asset_pattern or "")
+        # Используем cat через SSH для передачи файла
+        tmp = f"{remote_path}.new"
+        remote = (
+            f"cat > {tmp} && "
+            f"chmod +x {tmp} && mv {tmp} {remote_path} && "
+            f"sudo -n systemctl restart {adapter.restart_service}"
+        )
+        
+        # Создаем SSH процесс с возможностью записи в stdin
+        ssh_user = entry.data.get(CONF_SSH_USER, "root")
+        ssh_port = int(entry.data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT))
+        host = entry.data.get(CONF_HOST)
+        key = _key_path(hass)
+        cmd = [
+            "ssh", "-p", str(ssh_port), "-i", key, "-o", "BatchMode=yes",
+            "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10",
+            f"{ssh_user}@{host}", remote,
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, 
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, 
+            stderr=asyncio.subprocess.PIPE
+        )
+        out, err = await asyncio.wait_for(proc.communicate(input=content), timeout=300)
+        if proc.returncode != 0:
+            raise HomeAssistantError(f"SSH {host}: {err.decode(errors='ignore').strip()}")
+        return
 
-    tmp = f"{remote_path}.new"
-    remote = (
-        f"cat > {tmp} && "
-        f"chmod +x {tmp} && mv {tmp} {remote_path} && "
-        f"sudo -n systemctl restart {adapter.restart_service}"
-    )
-    await ssh_exec_with_stdin(hass, entry, remote, content, timeout=300)
+    # Если приложение не распознано
+    raise HomeAssistantError(f"Неизвестное приложение {app}")
 
 
 def _extract_from_zip(content: bytes, pattern: str) -> bytes:
