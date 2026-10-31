@@ -1,6 +1,5 @@
 """Платформа Update + функции установки для сервисов."""
 from __future__ import annotations
-
 import asyncio
 import io
 import zipfile
@@ -172,4 +171,5 @@ class ServiceUpdaterUpdateEntity(CoordinatorEntity[ServiceUpdaterCoordinator], U
         return (self.coordinator.data or {}).get(f"{self._app}_release_url")
 
     async def async_release_notes(self) -> str | None:
-        return "Обновление выполняется через сервисы service_updater.*"
+        # Возвращаем текст Changelog'а
+        return (self.coordinator.data or {}).get(f"{self._app}_release_notes", "Нет данных")

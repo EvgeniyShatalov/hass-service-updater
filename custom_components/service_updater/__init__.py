@@ -84,6 +84,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if check_time: interval_hours = None
 
     coordinator = ServiceUpdaterCoordinator(hass, entry.data, interval_hours, check_time)
+    
+    # Загружаем историю с диска перед первым опросом
+    await coordinator.async_load_history()
+    
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 

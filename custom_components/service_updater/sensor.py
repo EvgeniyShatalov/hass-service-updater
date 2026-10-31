@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
 from .const import CONF_APP, DOMAIN
 from .coordinator import ServiceUpdaterCoordinator
 
@@ -17,11 +18,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         entities.append(AppVersionSensor(coordinator, entry))
         entities.append(DebianLastUpgradeSensor(coordinator, entry))
         entities.append(NextCheckSensor(coordinator, entry))
+        entities.append(LastCheckSensor(coordinator, entry))
     async_add_entities(entities)
+
 
 class AppVersionSensor(CoordinatorEntity[ServiceUpdaterCoordinator], SensorEntity):
     _attr_icon = "mdi:package-up"
     _attr_has_entity_name = True
+    
     def __init__(self, coordinator, entry):
         super().__init__(coordinator)
         self.entry = entry
@@ -54,11 +58,13 @@ class AppVersionSensor(CoordinatorEntity[ServiceUpdaterCoordinator], SensorEntit
             "error": data.get(f"{self._app}_error"),
         }
 
+
 class DebianLastUpgradeSensor(CoordinatorEntity[ServiceUpdaterCoordinator], SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:package-check"
     _attr_has_entity_name = True
     _attr_name = "Debian Last Upgrade"
+    
     def __init__(self, coordinator, entry):
         super().__init__(coordinator)
         self.entry = entry
@@ -89,11 +95,13 @@ class DebianLastUpgradeSensor(CoordinatorEntity[ServiceUpdaterCoordinator], Sens
             "error": data.get("debian_error"),
         }
 
+
 class NextCheckSensor(CoordinatorEntity[ServiceUpdaterCoordinator], SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:clock-outline"
     _attr_has_entity_name = True
     _attr_name = "Next Check Time"
+    
     def __init__(self, coordinator, entry):
         super().__init__(coordinator)
         self.entry = entry
@@ -110,3 +118,27 @@ class NextCheckSensor(CoordinatorEntity[ServiceUpdaterCoordinator], SensorEntity
         next_check = (self.coordinator.data or {}).get("next_check")
         if not next_check: return None
         return datetime.fromisoformat(next_check)
+
+
+class LastCheckSensor(CoordinatorEntity[ServiceUpdaterCoordinator], SensorEntity):
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:clock-check-outline"
+    _attr_has_entity_name = True
+    _attr_name = "Last Check Time"
+    
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator)
+        self.entry = entry
+        self._app = entry.data.get(CONF_APP, "")
+        self._attr_unique_id = f"{entry.entry_id}_{self._app}_last_check"
+        self._attr_device_info = {"identifiers": {(DOMAIN, entry.entry_id)}, "name": entry.title}
+
+    @property
+    def suggested_object_id(self) -> str:
+        return f"{self._app}_last_check"
+
+    @property
+    def native_value(self) -> datetime | None:
+        last_check = (self.coordinator.data or {}).get("last_check")
+        if not last_check: return None
+        return datetime.fromisoformat(last_check)

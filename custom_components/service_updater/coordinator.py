@@ -10,6 +10,7 @@ import aiohttp
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .adapters import ADAPTERS, ServiceAdapter
@@ -35,10 +36,21 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         self._interval = timedelta(hours=interval_hours) if interval_hours else None
         self._check_time = check_time
 
+        # Хранилище для истории обновлений Debian (сохраняется на диск)
+        store_key = f"service_updater_history_{self.app}_{self.host}"
+        self._store = Store(hass, 1, store_key)
+
         self._last_debian_upgrade: dict | None = None
         self._upgrade_history: list[dict] = []
 
         super().__init__(hass, _LOGGER, name=f"{DOMAIN}_{self.app}", update_interval=self._interval)
+
+    async def async_load_history(self) -> None:
+        """Загружает историю с диска при старте."""
+        stored = await self._store.async_load()
+        if stored:
+            self._last_debian_upgrade = stored.get("last_upgrade")
+            self._upgrade_history = stored.get("history", [])
 
     async def _async_update_data(self) -> dict:
         now_local = dt_util.now()
@@ -134,6 +146,7 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         current = "unknown"
         latest = "unknown"
         release_url = None
+        release_notes = "Описание изменений недоступно." 
 
         try:
             if adapter.version_url_path:
@@ -149,6 +162,7 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             if key == "cloudpub":
                 latest = current
                 release_url = "https://cloudpub.ru"
+                release_notes = "Команда `clo upgrade` загружает и устанавливает последнюю стабильную версию с официального сервера CloudPub."
             else:
                 api = f"https://api.github.com/repos/{adapter.github_repo}/releases/latest"
                 async with self.session.get(api, timeout=10) as resp:
@@ -158,12 +172,15 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
                         latest_match = re.search(r'(\d+\.\d+\.\d+)', latest_tag)
                         latest = latest_match.group(1) if latest_match else latest_tag
                         release_url = rel.get("html_url")
+                        release_notes = rel.get("body") or "Разработчик не приложил описание к этому релизу."
+                        release_notes = release_notes[:3000]
         except Exception as ex:
             _LOGGER.warning("Не удалось получить последнюю версию %s: %s", key, ex)
 
         result[f"{key}_current"] = current
         result[f"{key}_latest"] = latest
         result[f"{key}_release_url"] = release_url
+        result[f"{key}_release_notes"] = release_notes
 
         if current != "unknown" and latest != "unknown":
             current_clean = current.lstrip("v").split("-")[0]
@@ -194,6 +211,12 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         self._upgrade_history.append(entry)
         if len(self._upgrade_history) > 5:
             self._upgrade_history = self._upgrade_history[-5:]
+            
+        self.hass.async_create_task(self._store.async_save({
+            "last_upgrade": self._last_debian_upgrade,
+            "history": self._upgrade_history
+        }))
+        
         self.async_set_updated_data({
             **(self.data or {}),
             "debian_last_upgrade": self._last_debian_upgrade,
