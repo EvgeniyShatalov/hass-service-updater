@@ -1,12 +1,10 @@
 """Binary sensors для Service Updater."""
 from __future__ import annotations
-
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
 from .const import CONF_APP, DOMAIN
 from .coordinator import ServiceUpdaterCoordinator
 
@@ -23,7 +21,6 @@ class AppUpdateBinarySensor(CoordinatorEntity[ServiceUpdaterCoordinator], Binary
     _attr_device_class = BinarySensorDeviceClass.UPDATE
     _attr_icon = "mdi:package-up"
     _attr_has_entity_name = True
-
     def __init__(self, coordinator, entry):
         super().__init__(coordinator)
         self.entry = entry
@@ -57,7 +54,6 @@ class DebianUpdateBinarySensor(CoordinatorEntity[ServiceUpdaterCoordinator], Bin
     _attr_device_class = BinarySensorDeviceClass.UPDATE
     _attr_icon = "mdi:debian"
     _attr_has_entity_name = True
-
     def __init__(self, coordinator, entry):
         super().__init__(coordinator)
         self.entry = entry

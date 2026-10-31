@@ -1,6 +1,5 @@
 """Описания поддерживаемых приложений."""
 from __future__ import annotations
-
 from dataclasses import dataclass
 import aiohttp
 
@@ -17,9 +16,7 @@ class ServiceAdapter:
     is_docker: bool = False
     docker_service_name: str = "frigate"
 
-    async def get_local_version(
-        self, session: aiohttp.ClientSession, host: str, port: int
-    ) -> str:
+    async def get_local_version(self, session: aiohttp.ClientSession, host: str, port: int) -> str:
         if self.version_url_path:
             url = f"http://{host}:{port}{self.version_url_path}"
             async with session.get(url, timeout=10) as resp:

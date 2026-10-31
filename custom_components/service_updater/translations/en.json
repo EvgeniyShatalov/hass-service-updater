@@ -4,29 +4,17 @@
       "user": {
         "title": "Service Updater — SSH Key",
         "description": "Status: {status}.\nPath: {path}\n\n{instruction}",
-        "data": {
-          "public_key": "Public key",
-          "action": "Action"
-        }
+        "data": { "public_key": "Public key", "action": "Action" }
       },
       "connection": {
         "title": "Host settings",
         "description": "Enter IP and port. User defaults to root.",
-        "data": {
-          "app": "Application",
-          "host": "IP address",
-          "ssh_user": "SSH user",
-          "ssh_port": "SSH port",
-          "scan_interval_hours": "Interval (hours)"
-        }
+        "data": { "app": "Application", "host": "IP address", "ssh_user": "SSH user", "ssh_port": "SSH port", "scan_interval_hours": "Interval (hours)" }
       },
       "show_command": {
         "title": "Command to add SSH key",
         "description": "{instruction}",
-        "data": {
-          "full_command": "Command (click here and press Ctrl+A, Ctrl+C)",
-          "action": "Action"
-        }
+        "data": { "full_command": "Command (click here and press Ctrl+A, Ctrl+C)", "action": "Action" }
       }
     },
     "error": {
@@ -36,19 +24,14 @@
       "keygen_failed": "Failed to generate SSH key.",
       "no_key": "SSH key not created."
     },
-    "abort": {
-      "already_configured": "Already configured"
-    }
+    "abort": { "already_configured": "Already configured" }
   },
   "options": {
     "step": {
       "init": {
         "title": "Update check interval",
         "description": "{app} on {host}.\nIf time is set, it will check exactly at this time every day.\nIf left empty, interval will be used.",
-        "data": {
-          "check_time": "Check time (HH:MM:SS)",
-          "scan_interval_hours": "Interval (hours) if time is not set"
-        }
+        "data": { "check_time": "Check time (HH:MM:SS)", "scan_interval_hours": "Interval (hours) if time is not set" }
       }
     }
   }

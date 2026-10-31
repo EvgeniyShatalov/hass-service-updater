@@ -99,11 +99,7 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             return await asyncio.wait_for(self._check_program(), timeout=PROGRAM_CHECK_TIMEOUT)
         except asyncio.TimeoutError:
             key = self.app
-            return {
-                f"{key}_update_available": False,
-                f"{key}_error": "timeout",
-                "program_timeout": True,
-            }
+            return {f"{key}_update_available": False, f"{key}_error": "timeout", "program_timeout": True}
         except Exception as ex:
             key = self.app
             return {f"{key}_error": str(ex)}
@@ -115,11 +111,9 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         pending: list[dict] = []
         for line in out.splitlines():
             line = line.strip()
-            if "upgradable from" not in line:
-                continue
+            if "upgradable from" not in line: continue
             parts = line.split()
-            if len(parts) < 2:
-                continue
+            if len(parts) < 2: continue
             name = parts[0].split("/")[0]
             new_ver = parts[1]
             old_ver = line.split("upgradable from:")[1].strip(" ]") if "upgradable from:" in line else ""
@@ -141,22 +135,18 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         latest = "unknown"
         release_url = None
 
-        # 1. Получаем текущую версию (изолированно)
         try:
             if adapter.version_url_path:
                 current = await adapter.get_local_version(self.session, self.host, adapter.default_port)
             elif key == "cloudpub":
-                raw_version = (await self.ssh_exec("/usr/local/bin/clo --version")).strip()
+                raw_version = (await self.ssh_exec("/usr/local/bin/clo --version 2>&1 || true")).strip()
                 match = re.search(r'(\d+\.\d+\.\d+)', raw_version)
                 current = match.group(1) if match else raw_version
         except Exception as ex:
             _LOGGER.warning("Не удалось получить текущую версию %s: %s", key, ex)
 
-        # 2. Получаем последнюю версию (изолированно)
         try:
             if key == "cloudpub":
-                # У CloudPub нет релизов на GitHub, поэтому мы просто 
-                # приравниваем последнюю версию к текущей, чтобы не было ложных срабатываний.
                 latest = current
                 release_url = "https://cloudpub.ru"
             else:
@@ -175,7 +165,6 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         result[f"{key}_latest"] = latest
         result[f"{key}_release_url"] = release_url
 
-        # 3. Сравниваем
         if current != "unknown" and latest != "unknown":
             current_clean = current.lstrip("v").split("-")[0]
             latest_clean = latest.lstrip("v").split("-")[0]
@@ -195,6 +184,7 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         if proc.returncode != 0:
+            if out: return out.decode(errors="ignore")
             raise UpdateFailed(err.decode(errors="ignore").strip() or "SSH error")
         return out.decode(errors="ignore")
 

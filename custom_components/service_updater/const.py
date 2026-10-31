@@ -7,7 +7,7 @@ CONF_SSH_USER = "ssh_user"
 CONF_SSH_PORT = "ssh_port"
 CONF_COMPOSE_DIR = "compose_dir"
 CONF_SCAN_INTERVAL_HOURS = "scan_interval_hours"
-CONF_CHECK_TIME = "check_time"  # Новое: конкретное время проверки (HH:MM:SS)
+CONF_CHECK_TIME = "check_time"
 
 SERVICE_INSTALL_DEBIAN = "install_debian"
 SERVICE_INSTALL_APP = "install_app"
@@ -19,7 +19,6 @@ DEFAULT_SCAN_INTERVAL_HOURS = 24
 SCAN_INTERVAL_MIN_HOURS = 1
 SCAN_INTERVAL_MAX_HOURS = 168
 
-# Тайм-ауты (секунды)
 PROGRAM_CHECK_TIMEOUT = 60
 DEBIAN_CHECK_TIMEOUT = 120
 INSTALL_DEBIAN_TIMEOUT = 900

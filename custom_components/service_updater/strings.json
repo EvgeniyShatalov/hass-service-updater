@@ -4,29 +4,17 @@
       "user": {
         "title": "Service Updater — SSH-ключ",
         "description": "Статус: {status}.\nПуть: {path}\n\n{instruction}",
-        "data": {
-          "public_key": "Публичный ключ",
-          "action": "Действие"
-        }
+        "data": { "public_key": "Публичный ключ", "action": "Действие" }
       },
       "connection": {
         "title": "Параметры хоста",
         "description": "Введите IP и порт. Пользователь по умолчанию — root.",
-        "data": {
-          "app": "Приложение",
-          "host": "IP-адрес",
-          "ssh_user": "SSH-пользователь",
-          "ssh_port": "SSH-порт",
-          "scan_interval_hours": "Интервал (часы)"
-        }
+        "data": { "app": "Приложение", "host": "IP-адрес", "ssh_user": "SSH-пользователь", "ssh_port": "SSH-порт", "scan_interval_hours": "Интервал (часы)" }
       },
       "show_command": {
         "title": "Команда для добавления ключа",
         "description": "{instruction}",
-        "data": {
-          "full_command": "Команда (нажмите сюда и Ctrl+A, Ctrl+C)",
-          "action": "Действие"
-        }
+        "data": { "full_command": "Команда (нажмите сюда и Ctrl+A, Ctrl+C)", "action": "Действие" }
       }
     },
     "error": {
@@ -36,19 +24,14 @@
       "keygen_failed": "Не удалось сгенерировать SSH-ключ.",
       "no_key": "SSH-ключ не создан."
     },
-    "abort": {
-      "already_configured": "Уже настроено"
-    }
+    "abort": { "already_configured": "Уже настроено" }
   },
   "options": {
     "step": {
       "init": {
         "title": "Периодичность проверки",
         "description": "{app} на {host}.\nЕсли указать время, проверка будет строго в это время каждый день.\nЕсли оставить пустым — будет использоваться интервал.",
-        "data": {
-          "check_time": "Время проверки (ЧЧ:ММ:СС)",
-          "scan_interval_hours": "Интервал (часы), если время не задано"
-        }
+        "data": { "check_time": "Время проверки (ЧЧ:ММ:СС)", "scan_interval_hours": "Интервал (часы), если время не задано" }
       }
     }
   }
