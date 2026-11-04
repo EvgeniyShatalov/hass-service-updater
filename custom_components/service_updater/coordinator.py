@@ -36,7 +36,6 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         self._interval = timedelta(hours=interval_hours) if interval_hours else None
         self._check_time = check_time
 
-        # Хранилище для истории обновлений Debian (сохраняется на диск)
         store_key = f"service_updater_history_{self.app}_{self.host}"
         self._store = Store(hass, 1, store_key)
 
@@ -46,7 +45,6 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         super().__init__(hass, _LOGGER, name=f"{DOMAIN}_{self.app}", update_interval=self._interval)
 
     async def async_load_history(self) -> None:
-        """Загружает историю с диска при старте."""
         stored = await self._store.async_load()
         if stored:
             self._last_debian_upgrade = stored.get("last_upgrade")
@@ -146,11 +144,15 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         current = "unknown"
         latest = "unknown"
         release_url = None
-        release_notes = "Описание изменений недоступно." 
+        release_notes = "Описание изменений недоступно."
 
         try:
             if adapter.version_url_path:
                 current = await adapter.get_local_version(self.session, self.host, adapter.default_port)
+                # НОВОЕ: Очищаем версию Frigate от хэша (0.18.2-cfa08c5 -> 0.18.2)
+                if key == "frigate":
+                    match = re.search(r'(\d+\.\d+\.\d+)', current)
+                    current = match.group(1) if match else current
             elif key == "cloudpub":
                 raw_version = (await self.ssh_exec("/usr/local/bin/clo --version 2>&1 || true")).strip()
                 match = re.search(r'(\d+\.\d+\.\d+)', raw_version)
@@ -178,7 +180,6 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             _LOGGER.warning("Не удалось получить последнюю версию %s: %s", key, ex)
 
         result[f"{key}_current"] = current
-        result[f"{key}_latest"] = latest
         result[f"{key}_release_url"] = release_url
         result[f"{key}_release_notes"] = release_notes
 
@@ -186,8 +187,10 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             current_clean = current.lstrip("v").split("-")[0]
             latest_clean = latest.lstrip("v").split("-")[0]
             result[f"{key}_update_available"] = current_clean != latest_clean
+            result[f"{key}_latest"] = latest
         else:
             result[f"{key}_update_available"] = False
+            result[f"{key}_latest"] = None
 
         return result
 
