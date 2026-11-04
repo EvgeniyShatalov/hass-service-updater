@@ -47,7 +47,6 @@ ADAPTERS: dict[str, ServiceAdapter] = {
         github_repo="blakeblackshear/frigate",
         default_port=5000,
         version_url_path="/api/version",
-        version_json_key="version",
         is_docker=True,
         docker_service_name="frigate",
     ),
