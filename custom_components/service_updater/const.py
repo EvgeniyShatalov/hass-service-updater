@@ -8,6 +8,7 @@ CONF_SSH_PORT = "ssh_port"
 CONF_COMPOSE_DIR = "compose_dir"
 CONF_SCAN_INTERVAL_HOURS = "scan_interval_hours"
 CONF_CHECK_TIME = "check_time"
+CONF_CHECK_MODE = "check_mode"  # <--- НОВАЯ КОНСТАНТА
 
 SERVICE_INSTALL_DEBIAN = "install_debian"
 SERVICE_INSTALL_APP = "install_app"

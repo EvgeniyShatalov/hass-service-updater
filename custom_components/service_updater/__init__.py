@@ -12,7 +12,7 @@ from homeassistant.helpers.event import async_track_time_change
 from .const import (
     ATTR_ENTRY_ID, ATTR_HOST, CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS,
     DOMAIN, SERVICE_INSTALL_APP, SERVICE_INSTALL_DEBIAN,
-    INSTALL_DEBIAN_TIMEOUT, INSTALL_APP_TIMEOUT, CONF_CHECK_TIME,
+    INSTALL_DEBIAN_TIMEOUT, INSTALL_APP_TIMEOUT, CONF_CHECK_TIME, CONF_CHECK_MODE,
 )
 from .coordinator import ServiceUpdaterCoordinator
 from .update import install_app, install_debian
@@ -78,16 +78,18 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    interval_hours = entry.options.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
-    check_time = entry.options.get(CONF_CHECK_TIME)
+    check_mode = entry.options.get(CONF_CHECK_MODE, "interval")
     
-    if check_time: interval_hours = None
+    if check_mode == "time":
+        check_time = entry.options.get(CONF_CHECK_TIME)
+        interval_hours = None
+    else:
+        check_time = None
+        interval_hours = entry.options.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
 
     coordinator = ServiceUpdaterCoordinator(hass, entry.data, interval_hours, check_time)
     
-    # Загружаем историю с диска перед первым опросом
     await coordinator.async_load_history()
-    
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 

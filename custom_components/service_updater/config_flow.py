@@ -14,7 +14,7 @@ from .const import (
     CONF_SSH_PORT, CONF_SSH_USER, DEFAULT_COMPOSE_DIR, DEFAULT_SCAN_INTERVAL_HOURS,
     DEFAULT_SSH_PORT, DEFAULT_SSH_USER, DOMAIN, SCAN_INTERVAL_MAX_HOURS,
     SCAN_INTERVAL_MIN_HOURS, SSH_KEY_DIR, SSH_PRIVATE_KEY, SSH_PUBLIC_KEY,
-    CONF_CHECK_TIME,
+    CONF_CHECK_TIME, CONF_CHECK_MODE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -195,28 +195,81 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry):
         return ServiceUpdaterOptionsFlow()
 
+
 class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
+    """Новый трехшаговый Options Flow."""
+    
     async def async_step_init(self, user_input=None) -> FlowResult:
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            if user_input.get(CONF_CHECK_MODE) == "time":
+                return await self.async_step_time()
+            else:
+                return await self.async_step_interval()
 
-        current_interval = self.config_entry.options.get(
-            CONF_SCAN_INTERVAL_HOURS,
-            self.config_entry.data.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS),
-        )
-        current_time = self.config_entry.options.get(CONF_CHECK_TIME)
+        current_mode = self.config_entry.options.get(CONF_CHECK_MODE, "interval")
 
         return self.async_show_form(
             step_id="init",
             description_placeholders={
                 "host": self.config_entry.data.get(CONF_HOST, ""),
                 "app": APPS.get(self.config_entry.data.get(CONF_APP), ""),
-                "default": DEFAULT_SCAN_INTERVAL_HOURS,
-                "min": SCAN_INTERVAL_MIN_HOURS,
-                "max": SCAN_INTERVAL_MAX_HOURS,
             },
             data_schema=vol.Schema({
-                vol.Optional(CONF_CHECK_TIME, description={"suggested_value": current_time}): selector.TimeSelector(),
-                vol.Optional(CONF_SCAN_INTERVAL_HOURS, default=current_interval): vol.All(int, vol.Range(min=SCAN_INTERVAL_MIN_HOURS, max=SCAN_INTERVAL_MAX_HOURS)),
+                vol.Required(CONF_CHECK_MODE, default=current_mode): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(value="time", label="В конкретное время"),
+                            selector.SelectOptionDict(value="interval", label="По интервалу"),
+                        ],
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                ),
+            }),
+        )
+
+    async def async_step_time(self, user_input=None) -> FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(
+                title="", 
+                data={
+                    CONF_CHECK_MODE: "time",
+                    CONF_CHECK_TIME: user_input[CONF_CHECK_TIME]
+                }
+            )
+
+        current_time = self.config_entry.options.get(CONF_CHECK_TIME, "03:00:00")
+
+        return self.async_show_form(
+            step_id="time",
+            data_schema=vol.Schema({
+                vol.Required(CONF_CHECK_TIME, default=current_time): selector.TimeSelector(),
+            }),
+        )
+
+    async def async_step_interval(self, user_input=None) -> FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(
+                title="", 
+                data={
+                    CONF_CHECK_MODE: "interval",
+                    CONF_SCAN_INTERVAL_HOURS: user_input[CONF_SCAN_INTERVAL_HOURS]
+                }
+            )
+
+        current_interval = self.config_entry.options.get(
+            CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS
+        )
+
+        return self.async_show_form(
+            step_id="interval",
+            data_schema=vol.Schema({
+                vol.Required(CONF_SCAN_INTERVAL_HOURS, default=current_interval): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=SCAN_INTERVAL_MIN_HOURS,
+                        max=SCAN_INTERVAL_MAX_HOURS,
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="ч",
+                    )
+                ),
             }),
         )
