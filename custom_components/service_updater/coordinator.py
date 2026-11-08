@@ -109,10 +109,10 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             return await asyncio.wait_for(self._check_program(), timeout=PROGRAM_CHECK_TIMEOUT)
         except asyncio.TimeoutError:
             key = self.app
-            return {f"{key}_update_available": False, f"{key}_error": "timeout", "program_timeout": True}
+            return {f"{key}_current": None, f"{key}_latest": None, f"{key}_update_available": False, f"{key}_error": "timeout", "program_timeout": True}
         except Exception as ex:
             key = self.app
-            return {f"{key}_error": str(ex)}
+            return {f"{key}_current": None, f"{key}_latest": None, f"{key}_update_available": False, f"{key}_error": str(ex)}
 
     async def _check_debian(self) -> dict:
         remote = "sudo -n apt-get update -qq && apt list --upgradable 2>/dev/null"
@@ -141,15 +141,15 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         adapter = self.adapter
         key = self.app
         result: dict = {}
-        current = "unknown"
-        latest = "unknown"
+        current = None
+        latest = None
         release_url = None
         release_notes = "Описание изменений недоступно."
+        error_msg = None
 
         try:
             if adapter.version_url_path:
                 current = await adapter.get_local_version(self.session, self.host, adapter.default_port)
-                # НОВОЕ: Очищаем версию Frigate от хэша (0.18.2-cfa08c5 -> 0.18.2)
                 if key == "frigate":
                     match = re.search(r'(\d+\.\d+\.\d+)', current)
                     current = match.group(1) if match else current
@@ -159,6 +159,7 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
                 current = match.group(1) if match else raw_version
         except Exception as ex:
             _LOGGER.warning("Не удалось получить текущую версию %s: %s", key, ex)
+            error_msg = str(ex)
 
         try:
             if key == "cloudpub":
@@ -178,12 +179,15 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
                         release_notes = release_notes[:3000]
         except Exception as ex:
             _LOGGER.warning("Не удалось получить последнюю версию %s: %s", key, ex)
+            if not error_msg:
+                error_msg = f"Ошибка GitHub: {ex}"
 
         result[f"{key}_current"] = current
         result[f"{key}_release_url"] = release_url
         result[f"{key}_release_notes"] = release_notes
+        result[f"{key}_error"] = error_msg
 
-        if current != "unknown" and latest != "unknown":
+        if current and latest:
             current_clean = current.lstrip("v").split("-")[0]
             latest_clean = latest.lstrip("v").split("-")[0]
             result[f"{key}_update_available"] = current_clean != latest_clean
@@ -204,8 +208,12 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         if proc.returncode != 0:
-            if out: return out.decode(errors="ignore")
-            raise UpdateFailed(err.decode(errors="ignore").strip() or "SSH error")
+            err_text = err.decode(errors="ignore").strip()
+            out_text = out.decode(errors="ignore").strip()
+            # Возвращаем stdout, если он есть (иногда clo пишет туда), иначе кидаем ошибку
+            if out_text:
+                return out_text
+            raise UpdateFailed(err_text or "SSH error (no stderr output)")
         return out.decode(errors="ignore")
 
     def record_debian_upgrade(self, packages: list[dict]) -> None:
