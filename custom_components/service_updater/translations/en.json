@@ -43,24 +43,21 @@
   "options": {
     "step": {
       "init": {
-        "title": "Update check interval",
-        "description": "{app} on {host}.\n\nChoose how to check for updates:",
+        "title": "Connection settings",
+        "description": "Settings for {host}.\nSelect how to check for updates:",
         "data": {
+          "host": "IP address",
+          "ssh_port": "SSH port",
+          "ssh_user": "SSH user",
           "check_mode": "Check mode"
         }
       },
-      "time": {
-        "title": "Check time",
-        "description": "Set the exact time for the daily check.",
+      "settings": {
+        "title": "Check parameters",
+        "description": "Select interval or exact time.",
         "data": {
+          "scan_interval_hours": "Interval (hours)",
           "check_time": "Check time (HH:MM:SS)"
-        }
-      },
-      "interval": {
-        "title": "Check interval",
-        "description": "Set the interval between checks.",
-        "data": {
-          "scan_interval_hours": "Interval (hours)"
         }
       }
     }
