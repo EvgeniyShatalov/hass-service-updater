@@ -195,37 +195,14 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
                 release_url = "https://cloudpub.ru/download/"
                 release_notes = "Команда `clo upgrade` загружает и устанавливает последнюю стабильную версию с официального сервера CloudPub."
                 
-                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-                
-                # Способ А: Читаем заголовок Content-Disposition при скачивании файла
+                # Используем API crates.io для получения последней версии
                 try:
-                    url = "https://cloudpub.ru/download/stable/clo-latest-stable-linux-x86_64.tar.gz"
-                    async with self.session.get(url, allow_redirects=True, headers=headers, timeout=15) as resp:
-                        cd = resp.headers.get("Content-Disposition", "")
-                        match = re.search(r'clo-(\d+\.\d+\.\d+)-', cd)
-                        if match:
-                            latest = match.group(1)
-                        else:
-                            # Если заголовка нет, пробуем вытащить версию из финального URL
-                            match = re.search(r'clo-(\d+\.\d+\.\d+)-', str(resp.url))
-                            if match:
-                                latest = match.group(1)
+                    async with self.session.get("https://crates.io/api/v1/crates/cloudpub-client", timeout=15) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            latest = data.get("crate", {}).get("max_version")
                 except Exception as ex:
-                    _LOGGER.debug("Не удалось прочитать заголовки при скачивании: %s", ex)
-                
-                # Способ Б: Парсим главную страницу сайта
-                if not latest:
-                    try:
-                        async with self.session.get("https://cloudpub.ru/", headers=headers, timeout=10) as resp:
-                            if resp.status == 200:
-                                html = await resp.text()
-                                match = re.search(r'clo-(\d+\.\d+\.\d+)-stable', html)
-                                if not match:
-                                    match = re.search(r'CLOUDPUB\s+(\d+\.\d+\.\d+)', html)
-                                if match:
-                                    latest = match.group(1)
-                    except Exception as ex:
-                        _LOGGER.debug("Не удалось спарсить главную страницу: %s", ex)
+                    _LOGGER.debug("Не удалось получить версию с crates.io: %s", ex)
 
                 if not latest:
                     latest = current # Если не удалось узнать, считаем что версия актуальна
