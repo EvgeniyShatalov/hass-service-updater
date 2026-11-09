@@ -36,19 +36,30 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         self._interval = timedelta(hours=interval_hours) if interval_hours else None
         self._check_time = check_time
 
-        store_key = f"service_updater_history_{self.app}_{self.host}"
-        self._store = Store(hass, 1, store_key)
+        # Хранилища для истории и последних версий
+        store_key_hist = f"service_updater_history_{self.app}_{self.host}"
+        store_key_ver = f"service_updater_versions_{self.app}_{self.host}"
+        
+        self._store_hist = Store(hass, 1, store_key_hist)
+        self._store_ver = Store(hass, 1, store_key_ver)
 
         self._last_debian_upgrade: dict | None = None
         self._upgrade_history: list[dict] = []
+        self._last_known_versions: dict[str, str] = {} # Словарь для версий
 
         super().__init__(hass, _LOGGER, name=f"{DOMAIN}_{self.app}", update_interval=self._interval)
 
     async def async_load_history(self) -> None:
-        stored = await self._store.async_load()
-        if stored:
-            self._last_debian_upgrade = stored.get("last_upgrade")
-            self._upgrade_history = stored.get("history", [])
+        # Загружаем историю Debian
+        stored_hist = await self._store_hist.async_load()
+        if stored_hist:
+            self._last_debian_upgrade = stored_hist.get("last_upgrade")
+            self._upgrade_history = stored_hist.get("history", [])
+            
+        # Загружаем последние известные версии
+        stored_ver = await self._store_ver.async_load()
+        if stored_ver:
+            self._last_known_versions = stored_ver
 
     async def _async_update_data(self) -> dict:
         now_local = dt_util.now()
@@ -109,10 +120,21 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             return await asyncio.wait_for(self._check_program(), timeout=PROGRAM_CHECK_TIMEOUT)
         except asyncio.TimeoutError:
             key = self.app
-            return {f"{key}_current": None, f"{key}_latest": None, f"{key}_update_available": False, f"{key}_error": "timeout", "program_timeout": True}
+            return self._get_fallback_result(key, "timeout")
         except Exception as ex:
             key = self.app
-            return {f"{key}_current": None, f"{key}_latest": None, f"{key}_update_available": False, f"{key}_error": str(ex)}
+            return self._get_fallback_result(key, str(ex))
+            
+    def _get_fallback_result(self, key: str, error_msg: str) -> dict:
+        """Если программа упала, возвращаем последнюю сохраненную версию."""
+        last_ver = self._last_known_versions.get(key)
+        return {
+            f"{key}_current": last_ver,
+            f"{key}_latest": None,
+            f"{key}_update_available": False,
+            f"{key}_error": f"{error_msg} (из кэша)" if last_ver else error_msg,
+            "program_timeout": True
+        }
 
     async def _check_debian(self) -> dict:
         remote = "sudo -n apt-get update -qq && apt list --upgradable 2>/dev/null"
@@ -160,6 +182,17 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         except Exception as ex:
             _LOGGER.warning("Не удалось получить текущую версию %s: %s", key, ex)
             error_msg = str(ex)
+
+        # Если версия получена успешно, сохраняем её на диск
+        if current:
+            if self._last_known_versions.get(key) != current:
+                self._last_known_versions[key] = current
+                self.hass.async_create_task(self._store_ver.async_save(self._last_known_versions))
+        else:
+            # Если не получена, берем из сохраненного кэша
+            current = self._last_known_versions.get(key)
+            if current:
+                error_msg = f"{error_msg} (показана из кэша)" if error_msg else "Показана из кэша"
 
         try:
             if key == "cloudpub":
@@ -210,10 +243,9 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         if proc.returncode != 0:
             err_text = err.decode(errors="ignore").strip()
             out_text = out.decode(errors="ignore").strip()
-            # Возвращаем stdout, если он есть (иногда clo пишет туда), иначе кидаем ошибку
             if out_text:
                 return out_text
-            raise UpdateFailed(err_text or "SSH error (no stderr output)")
+            raise UpdateFailed(err_text or "SSH error")
         return out.decode(errors="ignore")
 
     def record_debian_upgrade(self, packages: list[dict]) -> None:
@@ -223,7 +255,7 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         if len(self._upgrade_history) > 5:
             self._upgrade_history = self._upgrade_history[-5:]
             
-        self.hass.async_create_task(self._store.async_save({
+        self.hass.async_create_task(self._store_hist.async_save({
             "last_upgrade": self._last_debian_upgrade,
             "history": self._upgrade_history
         }))
