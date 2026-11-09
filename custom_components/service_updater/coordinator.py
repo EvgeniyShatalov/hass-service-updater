@@ -192,20 +192,32 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         # 2. Получаем последнюю версию
         try:
             if key == "cloudpub":
-                release_url = "https://cloudpub.ru"
+                release_url = "https://cloudpub.ru/download/"
                 release_notes = "Команда `clo upgrade` загружает и устанавливает последнюю стабильную версию с официального сервера CloudPub."
                 
-                # Используем GET с Range (скачиваем 1 байт), чтобы узнать финальный URL после редиректа
+                # Способ А: Парсим страницу загрузок
                 try:
-                    url = "https://cloudpub.ru/download/stable/clo-latest-stable-linux-x86_64.tar.gz"
-                    async with self.session.get(url, allow_redirects=True, headers={"Range": "bytes=0-0"}, timeout=10) as resp:
-                        final_url = str(resp.url)
-                        match = re.search(r'clo-(\d+\.\d+\.\d+)-', final_url)
-                        if match:
-                            latest = match.group(1)
+                    async with self.session.get("https://cloudpub.ru/download/", timeout=15) as resp:
+                        if resp.status == 200:
+                            html = await resp.text()
+                            match = re.search(r'clo-(\d+\.\d+\.\d+)-stable', html)
+                            if match:
+                                latest = match.group(1)
                 except Exception as ex:
-                    _LOGGER.debug("Не удалось получить последнюю версию CloudPub: %s", ex)
+                    _LOGGER.debug("Не удалось спарсить страницу загрузки CloudPub: %s", ex)
                 
+                # Способ Б: Читаем заголовок Content-Disposition
+                if not latest:
+                    try:
+                        url = "https://cloudpub.ru/download/stable/clo-latest-stable-linux-x86_64.tar.gz"
+                        async with self.session.head(url, allow_redirects=True, timeout=10) as resp:
+                            cd = resp.headers.get("Content-Disposition", "")
+                            match = re.search(r'clo-(\d+\.\d+\.\d+)-', cd)
+                            if match:
+                                latest = match.group(1)
+                    except Exception as ex:
+                        _LOGGER.debug("HEAD запрос не удался: %s", ex)
+
                 if not latest:
                     latest = current # Если не удалось узнать, считаем что версия актуальна
             else:
