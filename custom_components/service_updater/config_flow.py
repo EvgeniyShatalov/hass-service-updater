@@ -185,17 +185,34 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None) -> FlowResult:
-        """Шаг 1: Выбор режима (Интервал или Время)."""
+        errors: dict[str, str] = {}
+        
         if user_input is not None:
+            # Обновляем базовые данные (IP, порт, пользователь)
+            new_data = {
+                **self.config_entry.data,
+                CONF_HOST: user_input[CONF_HOST],
+                CONF_SSH_PORT: user_input[CONF_SSH_PORT],
+                CONF_SSH_USER: user_input[CONF_SSH_USER],
+            }
+            self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
+            
+            # Сохраняем опции (режим и время/интервал)
             self._mode = user_input.get(CONF_CHECK_MODE, MODE_INTERVAL)
             return await self.async_step_settings()
 
+        current_host = self.config_entry.data.get(CONF_HOST, "")
+        current_port = self.config_entry.data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT)
+        current_user = self.config_entry.data.get(CONF_SSH_USER, DEFAULT_SSH_USER)
         current_mode = self.config_entry.options.get(CONF_CHECK_MODE, MODE_INTERVAL)
 
         return self.async_show_form(
             step_id="init",
-            description_placeholders={"host": self.config_entry.data.get(CONF_HOST, "")},
+            description_placeholders={"host": current_host},
             data_schema=vol.Schema({
+                vol.Required(CONF_HOST, default=current_host): str,
+                vol.Required(CONF_SSH_PORT, default=current_port): int,
+                vol.Required(CONF_SSH_USER, default=current_user): str,
                 vol.Required(CONF_CHECK_MODE, default=current_mode): vol.In({
                     MODE_INTERVAL: "По интервалу",
                     MODE_TIME: "В конкретное время"
@@ -204,7 +221,6 @@ class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_settings(self, user_input=None) -> FlowResult:
-        """Шаг 2: Ввод конкретных настроек."""
         if user_input is not None:
             return self.async_create_entry(title="", data={**user_input, CONF_CHECK_MODE: self._mode})
 
