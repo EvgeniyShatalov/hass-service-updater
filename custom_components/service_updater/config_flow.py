@@ -9,12 +9,13 @@ from homeassistant.components import persistent_notification
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+
 from .const import (
     CONF_APP, CONF_COMPOSE_DIR, CONF_HOST, CONF_SCAN_INTERVAL_HOURS,
     CONF_SSH_PORT, CONF_SSH_USER, DEFAULT_COMPOSE_DIR, DEFAULT_SCAN_INTERVAL_HOURS,
     DEFAULT_SSH_PORT, DEFAULT_SSH_USER, DOMAIN, SCAN_INTERVAL_MAX_HOURS,
     SCAN_INTERVAL_MIN_HOURS, SSH_KEY_DIR, SSH_PRIVATE_KEY, SSH_PUBLIC_KEY,
-    CONF_CHECK_TIME, CONF_CHECK_MODE,
+    CONF_CHECK_TIME, CONF_CHECK_MODE, MODE_INTERVAL, MODE_TIME
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -93,7 +94,7 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "status": "Ключ найден" if has_key else "Ключ не найден",
                 "path": str(pub),
-                "instruction": "Сгенерируйте SSH-ключ кнопкой «generate», чтобы продолжить." if not has_key else "Нажмите «continue», чтобы перейти к добавлению хоста.",
+                "instruction": "Сгенерируйте SSH-ключ кнопкой «generate»." if not has_key else "Нажмите «continue».",
             },
         )
 
@@ -154,9 +155,8 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
         persistent_notification.async_create(
-            self.hass,
-            title=f"Service Updater: команда для {self._host}",
-            message=f"Скопируйте этот блок и выполните на хосте `{self._host}`:\n\n```bash\n{full_command}\n```\n\nПосле выполнения вернитесь в окно настройки и нажмите «Проверить подключение».",
+            self.hass, title=f"Service Updater: команда для {self._host}",
+            message=f"Скопируйте блок и выполните на хосте `{self._host}`:\n\n```bash\n{full_command}\n```",
             notification_id=f"service_updater_setup_{self._host}",
         )
 
@@ -164,30 +164,17 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Optional("full_command", default=full_command): selector.TextSelector(selector.TextSelectorConfig(multiline=True)),
             vol.Optional("action", default="check"): vol.In(["check", "finish"]),
         })
-        return self.async_show_form(
-            step_id="show_command", data_schema=schema, errors=errors,
-            description_placeholders={
-                "host": self._host,
-                "instruction": (
-                    "1. Кликните в поле с командой ниже, нажмите Ctrl+A (выделить всё) и Ctrl+C (скопировать).\n"
-                    "2. Выполните скопированную команду на вашем сервере.\n"
-                    "3. Вернитесь сюда и нажмите «Отправить» с действием «check»."
-                ),
-            },
-        )
+        return self.async_show_form(step_id="show_command", data_schema=schema, errors=errors)
 
     async def _create_entry(self) -> FlowResult:
         await self.async_set_unique_id(f"{self._app}_{self._ssh_user}@{self._host}:{self._ssh_port}")
         self._abort_if_unique_id_configured()
         persistent_notification.async_dismiss(self.hass, f"service_updater_setup_{self._host}")
-
         data = {
             CONF_APP: self._app, CONF_HOST: self._host, CONF_SSH_USER: self._ssh_user,
             CONF_SSH_PORT: self._ssh_port, CONF_SCAN_INTERVAL_HOURS: self._interval,
         }
-        if self._app == "frigate":
-            data[CONF_COMPOSE_DIR] = DEFAULT_COMPOSE_DIR
-
+        if self._app == "frigate": data[CONF_COMPOSE_DIR] = DEFAULT_COMPOSE_DIR
         return self.async_create_entry(title=f"{APPS[self._app]} @ {self._host}", data=data)
 
     @staticmethod
@@ -197,79 +184,40 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
-    """Новый трехшаговый Options Flow."""
-    
     async def async_step_init(self, user_input=None) -> FlowResult:
+        """Шаг 1: Выбор режима (Интервал или Время)."""
         if user_input is not None:
-            if user_input.get(CONF_CHECK_MODE) == "time":
-                return await self.async_step_time()
-            else:
-                return await self.async_step_interval()
+            self._mode = user_input.get(CONF_CHECK_MODE, MODE_INTERVAL)
+            return await self.async_step_settings()
 
-        current_mode = self.config_entry.options.get(CONF_CHECK_MODE, "interval")
+        current_mode = self.config_entry.options.get(CONF_CHECK_MODE, MODE_INTERVAL)
 
         return self.async_show_form(
             step_id="init",
-            description_placeholders={
-                "host": self.config_entry.data.get(CONF_HOST, ""),
-                "app": APPS.get(self.config_entry.data.get(CONF_APP), ""),
-            },
+            description_placeholders={"host": self.config_entry.data.get(CONF_HOST, "")},
             data_schema=vol.Schema({
-                vol.Required(CONF_CHECK_MODE, default=current_mode): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            selector.SelectOptionDict(value="time", label="В конкретное время"),
-                            selector.SelectOptionDict(value="interval", label="По интервалу"),
-                        ],
-                        mode=selector.SelectSelectorMode.LIST,
-                    )
-                ),
-            }),
+                vol.Required(CONF_CHECK_MODE, default=current_mode): vol.In({
+                    MODE_INTERVAL: "По интервалу",
+                    MODE_TIME: "В конкретное время"
+                })
+            })
         )
 
-    async def async_step_time(self, user_input=None) -> FlowResult:
+    async def async_step_settings(self, user_input=None) -> FlowResult:
+        """Шаг 2: Ввод конкретных настроек."""
         if user_input is not None:
-            return self.async_create_entry(
-                title="", 
-                data={
-                    CONF_CHECK_MODE: "time",
-                    CONF_CHECK_TIME: user_input[CONF_CHECK_TIME]
-                }
-            )
+            return self.async_create_entry(title="", data={**user_input, CONF_CHECK_MODE: self._mode})
 
-        current_time = self.config_entry.options.get(CONF_CHECK_TIME, "03:00:00")
+        schema_dict = {}
+        
+        if self._mode == MODE_INTERVAL:
+            current_interval = self.config_entry.options.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
+            schema_dict[vol.Required(CONF_SCAN_INTERVAL_HOURS, default=current_interval)] = vol.All(int, vol.Range(min=SCAN_INTERVAL_MIN_HOURS, max=SCAN_INTERVAL_MAX_HOURS))
+        else:
+            current_time = self.config_entry.options.get(CONF_CHECK_TIME)
+            schema_dict[vol.Required(CONF_CHECK_TIME, default=current_time or "03:00:00")] = selector.TimeSelector()
 
         return self.async_show_form(
-            step_id="time",
-            data_schema=vol.Schema({
-                vol.Required(CONF_CHECK_TIME, default=current_time): selector.TimeSelector(),
-            }),
-        )
-
-    async def async_step_interval(self, user_input=None) -> FlowResult:
-        if user_input is not None:
-            return self.async_create_entry(
-                title="", 
-                data={
-                    CONF_CHECK_MODE: "interval",
-                    CONF_SCAN_INTERVAL_HOURS: user_input[CONF_SCAN_INTERVAL_HOURS]
-                }
-            )
-
-        current_interval = self.config_entry.options.get(
-            CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS
-        )
-
-        return self.async_show_form(
-            step_id="interval",
-            data_schema=vol.Schema({
-                vol.Required(CONF_SCAN_INTERVAL_HOURS, default=current_interval): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=SCAN_INTERVAL_MIN_HOURS,
-                        max=SCAN_INTERVAL_MAX_HOURS,
-                        mode=selector.NumberSelectorMode.BOX,
-                        unit_of_measurement="ч",
-                    )
-                ),
-            }),
+            step_id="settings",
+            data_schema=vol.Schema(schema_dict)
         )
