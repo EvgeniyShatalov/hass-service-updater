@@ -36,7 +36,6 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         self._interval = timedelta(hours=interval_hours) if interval_hours else None
         self._check_time = check_time
 
-        # Хранилища для истории и последних версий
         store_key_hist = f"service_updater_history_{self.app}_{self.host}"
         store_key_ver = f"service_updater_versions_{self.app}_{self.host}"
         
@@ -45,18 +44,16 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
 
         self._last_debian_upgrade: dict | None = None
         self._upgrade_history: list[dict] = []
-        self._last_known_versions: dict[str, str] = {} # Словарь для версий
+        self._last_known_versions: dict[str, str] = {}
 
         super().__init__(hass, _LOGGER, name=f"{DOMAIN}_{self.app}", update_interval=self._interval)
 
     async def async_load_history(self) -> None:
-        # Загружаем историю Debian
         stored_hist = await self._store_hist.async_load()
         if stored_hist:
             self._last_debian_upgrade = stored_hist.get("last_upgrade")
             self._upgrade_history = stored_hist.get("history", [])
             
-        # Загружаем последние известные версии
         stored_ver = await self._store_ver.async_load()
         if stored_ver:
             self._last_known_versions = stored_ver
@@ -126,7 +123,6 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             return self._get_fallback_result(key, str(ex))
             
     def _get_fallback_result(self, key: str, error_msg: str) -> dict:
-        """Если программа упала, возвращаем последнюю сохраненную версию."""
         last_ver = self._last_known_versions.get(key)
         return {
             f"{key}_current": last_ver,
@@ -169,6 +165,7 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         release_notes = "Описание изменений недоступно."
         error_msg = None
 
+        # 1. Получаем текущую версию
         try:
             if adapter.version_url_path:
                 current = await adapter.get_local_version(self.session, self.host, adapter.default_port)
@@ -183,22 +180,35 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             _LOGGER.warning("Не удалось получить текущую версию %s: %s", key, ex)
             error_msg = str(ex)
 
-        # Если версия получена успешно, сохраняем её на диск
         if current:
             if self._last_known_versions.get(key) != current:
                 self._last_known_versions[key] = current
                 self.hass.async_create_task(self._store_ver.async_save(self._last_known_versions))
         else:
-            # Если не получена, берем из сохраненного кэша
             current = self._last_known_versions.get(key)
             if current:
                 error_msg = f"{error_msg} (показана из кэша)" if error_msg else "Показана из кэша"
 
+        # 2. Получаем последнюю версию
         try:
             if key == "cloudpub":
-                latest = current
                 release_url = "https://cloudpub.ru"
                 release_notes = "Команда `clo upgrade` загружает и устанавливает последнюю стабильную версию с официального сервера CloudPub."
+                
+                # Узнаем последнюю версию через редирект официального сайта
+                try:
+                    url = "https://cloudpub.ru/download/stable/clo-latest-stable-linux-x86_64.tar.gz"
+                    async with self.session.head(url, allow_redirects=False, timeout=10) as resp:
+                        if resp.status in (301, 302, 307):
+                            location = resp.headers.get("Location", "")
+                            match = re.search(r'clo-(\d+\.\d+\.\d+)-', location)
+                            if match:
+                                latest = match.group(1)
+                except Exception as ex:
+                    _LOGGER.debug("Не удалось получить последнюю версию CloudPub: %s", ex)
+                
+                if not latest:
+                    latest = current # Если не удалось узнать, считаем что версия актуальна
             else:
                 api = f"https://api.github.com/repos/{adapter.github_repo}/releases/latest"
                 async with self.session.get(api, timeout=10) as resp:
