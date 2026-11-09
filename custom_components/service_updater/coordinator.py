@@ -195,15 +195,14 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
                 release_url = "https://cloudpub.ru"
                 release_notes = "Команда `clo upgrade` загружает и устанавливает последнюю стабильную версию с официального сервера CloudPub."
                 
-                # Узнаем последнюю версию через редирект официального сайта
+                # Используем GET с Range (скачиваем 1 байт), чтобы узнать финальный URL после редиректа
                 try:
                     url = "https://cloudpub.ru/download/stable/clo-latest-stable-linux-x86_64.tar.gz"
-                    async with self.session.head(url, allow_redirects=False, timeout=10) as resp:
-                        if resp.status in (301, 302, 307):
-                            location = resp.headers.get("Location", "")
-                            match = re.search(r'clo-(\d+\.\d+\.\d+)-', location)
-                            if match:
-                                latest = match.group(1)
+                    async with self.session.get(url, allow_redirects=True, headers={"Range": "bytes=0-0"}, timeout=10) as resp:
+                        final_url = str(resp.url)
+                        match = re.search(r'clo-(\d+\.\d+\.\d+)-', final_url)
+                        if match:
+                            latest = match.group(1)
                 except Exception as ex:
                     _LOGGER.debug("Не удалось получить последнюю версию CloudPub: %s", ex)
                 
