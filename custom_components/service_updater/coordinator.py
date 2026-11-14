@@ -168,10 +168,14 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         # 1. Получаем текущую версию
         try:
             if adapter.version_url_path:
-                current = await adapter.get_local_version(self.session, self.host, adapter.default_port)
-                if key == "frigate":
-                    match = re.search(r'(\d+\.\d+\.\d+)', current)
-                    current = match.group(1) if match else current
+                current_raw = await adapter.get_local_version(self.session, self.host, adapter.default_port)
+                if key == "torrserver":
+                    # Вытаскиваем версию из HTML страницы (MatriX.150 или Silo.2)
+                    match = re.search(r'(MatriX\.\d+|Silo\.\d+|\d+\.\d+\.\d+)', current_raw)
+                    current = match.group(1) if match else "unknown"
+                elif key == "frigate":
+                    match = re.search(r'(\d+\.\d+\.\d+)', current_raw)
+                    current = match.group(1) if match else current_raw
             elif key == "cloudpub":
                 raw_version = (await self.ssh_exec("/usr/local/bin/clo --version 2>&1 || true")).strip()
                 match = re.search(r'(\d+\.\d+\.\d+)', raw_version)
@@ -180,7 +184,7 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             _LOGGER.warning("Не удалось получить текущую версию %s: %s", key, ex)
             error_msg = str(ex)
 
-        if current:
+        if current and current != "unknown":
             if self._last_known_versions.get(key) != current:
                 self._last_known_versions[key] = current
                 self.hass.async_create_task(self._store_ver.async_save(self._last_known_versions))
@@ -195,24 +199,43 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
                 release_url = "https://cloudpub.ru/download/"
                 release_notes = "Команда `clo upgrade` загружает и устанавливает последнюю стабильную версию с официального сервера CloudPub."
                 
-                # Используем API crates.io для получения последней версии
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
                 try:
-                    async with self.session.get("https://crates.io/api/v1/crates/cloudpub-client", timeout=15) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            latest = data.get("crate", {}).get("max_version")
+                    url = "https://cloudpub.ru/download/stable/clo-latest-stable-linux-x86_64.tar.gz"
+                    async with self.session.get(url, allow_redirects=True, headers=headers, timeout=15) as resp:
+                        cd = resp.headers.get("Content-Disposition", "")
+                        match = re.search(r'clo-(\d+\.\d+\.\d+)-', cd)
+                        if match:
+                            latest = match.group(1)
+                        else:
+                            match = re.search(r'clo-(\d+\.\d+\.\d+)-', str(resp.url))
+                            if match:
+                                latest = match.group(1)
                 except Exception as ex:
-                    _LOGGER.debug("Не удалось получить версию с crates.io: %s", ex)
-
+                    _LOGGER.debug("Не удалось прочитать заголовки при скачивании: %s", ex)
+                
                 if not latest:
-                    latest = current # Если не удалось узнать, считаем что версия актуальна
+                    try:
+                        async with self.session.get("https://cloudpub.ru/", headers=headers, timeout=10) as resp:
+                            if resp.status == 200:
+                                html = await resp.text()
+                                match = re.search(r'clo-(\d+\.\d+\.\d+)-stable', html)
+                                if not match:
+                                    match = re.search(r'CLOUDPUB\s+(\d+\.\d+\.\d+)', html)
+                                if match:
+                                    latest = match.group(1)
+                    except Exception as ex:
+                        _LOGGER.debug("Не удалось спарсить главную страницу: %s", ex)
+                
+                if not latest:
+                    latest = current
             else:
                 api = f"https://api.github.com/repos/{adapter.github_repo}/releases/latest"
                 async with self.session.get(api, timeout=10) as resp:
                     if resp.status == 200:
                         rel = await resp.json()
                         latest_tag = rel.get("tag_name", "0.0.0")
-                        latest_match = re.search(r'(\d+\.\d+\.\d+)', latest_tag)
+                        latest_match = re.search(r'(MatriX\.\d+|Silo\.\d+|\d+\.\d+\.\d+)', latest_tag)
                         latest = latest_match.group(1) if latest_match else latest_tag
                         release_url = rel.get("html_url")
                         release_notes = rel.get("body") or "Разработчик не приложил описание к этому релизу."

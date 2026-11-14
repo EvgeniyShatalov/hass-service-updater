@@ -31,7 +31,7 @@ ADAPTERS: dict[str, ServiceAdapter] = {
         key="torrserver", title="TorrServer",
         github_repo="YouROK/TorrServer",
         default_port=8090,
-        version_url_path="/echo",
+        version_url_path="/", # <-- Изменено на главную страницу
         asset_pattern="torrserver-linux-amd64",
         restart_service="torrserver.service",
     ),
