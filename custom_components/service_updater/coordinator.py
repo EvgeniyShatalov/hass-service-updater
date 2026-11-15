@@ -244,12 +244,22 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
 
         # 1. Получаем текущую версию
         try:
-            if adapter.version_url_path:
-                current_raw = await adapter.get_local_version(self.session, self.host, adapter.default_port)
-                if key == "torrserver":
+            if key == "torrserver":
+                # Пытаемся вытащить версию прямо из бинарного файла
+                raw_version = (await self.ssh_exec(
+                    "grep -a -o -E 'Silo\\.[0-9]+|MatriX\\.[0-9]+' /opt/torrserver/TorrServer-linux-amd64 | head -n 1"
+                )).strip()
+                
+                if raw_version:
+                    current = raw_version
+                else:
+                    # Если не удалось, пытаемся через HTTP (вдруг API вернется)
+                    current_raw = await adapter.get_local_version(self.session, self.host, adapter.default_port)
                     match = re.search(r'(MatriX\.\d+|Silo\.\d+|\d+\.\d+\.\d+)', current_raw)
                     current = match.group(1) if match else "unknown"
-                elif key == "frigate":
+            elif adapter.version_url_path:
+                current_raw = await adapter.get_local_version(self.session, self.host, adapter.default_port)
+                if key == "frigate":
                     match = re.search(r'(\d+\.\d+\.\d+)', current_raw)
                     current = match.group(1) if match else current_raw
             elif key == "cloudpub":
