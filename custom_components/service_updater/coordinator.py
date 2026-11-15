@@ -19,36 +19,49 @@ from .const import (
     DEFAULT_SSH_PORT, DEFAULT_SSH_USER, DOMAIN,
     PROGRAM_CHECK_TIMEOUT, DEBIAN_CHECK_TIMEOUT,
     SSH_KEY_DIR, SSH_PRIVATE_KEY,
+    SWITCH_CHECK_DEBIAN, SWITCH_CHECK_APP,
+    SWITCH_AUTO_INSTALL_DEBIAN, SWITCH_AUTO_INSTALL_APP,
+    DEFAULT_SWITCHES,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
-    def __init__(self, hass: HomeAssistant, entry_data: dict, interval_hours: int | None, check_time: str | None) -> None:
-        self.entry_data = entry_data
-        self.app: str = entry_data.get(CONF_APP, "")
+    def __init__(self, hass: HomeAssistant, entry, interval_hours: int | None, check_time: str | None) -> None:
+        self.entry = entry
+        self.entry_data = entry.data
+        self.app: str = self.entry_data.get(CONF_APP, "")
         self.adapter: ServiceAdapter = ADAPTERS[self.app]
-        self.host: str = entry_data.get(CONF_HOST, "")
-        self.ssh_user: str = entry_data.get(CONF_SSH_USER, DEFAULT_SSH_USER)
-        self.ssh_port: int = int(entry_data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT))
+        self.host: str = self.entry_data.get(CONF_HOST, "")
+        self.ssh_user: str = self.entry_data.get(CONF_SSH_USER, DEFAULT_SSH_USER)
+        self.ssh_port: int = int(self.entry_data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT))
         self.session = async_get_clientsession(hass)
         
         self._interval = timedelta(hours=interval_hours) if interval_hours else None
         self._check_time = check_time
 
+        # Хранилище для истории, версий и переключателей
         store_key_hist = f"service_updater_history_{self.app}_{self.host}"
         store_key_ver = f"service_updater_versions_{self.app}_{self.host}"
+        store_key_sw = f"service_updater_switches_{self.app}_{self.host}"
         
         self._store_hist = Store(hass, 1, store_key_hist)
         self._store_ver = Store(hass, 1, store_key_ver)
+        self._store_sw = Store(hass, 1, store_key_sw)
 
         self._last_debian_upgrade: dict | None = None
         self._upgrade_history: list[dict] = []
         self._last_known_versions: dict[str, str] = {}
+        self.switches: dict[str, bool] = dict(DEFAULT_SWITCHES)
+
+        # Защита от повторного запуска установки
+        self._installing_debian = False
+        self._installing_app = False
 
         super().__init__(hass, _LOGGER, name=f"{DOMAIN}_{self.app}", update_interval=self._interval)
 
     async def async_load_history(self) -> None:
+        """Загружает историю, версии и состояния переключателей с диска."""
         stored_hist = await self._store_hist.async_load()
         if stored_hist:
             self._last_debian_upgrade = stored_hist.get("last_upgrade")
@@ -57,6 +70,17 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         stored_ver = await self._store_ver.async_load()
         if stored_ver:
             self._last_known_versions = stored_ver
+
+        stored_sw = await self._store_sw.async_load()
+        if stored_sw:
+            self.switches.update(stored_sw)
+
+    async def set_switch(self, key: str, state: bool) -> None:
+        """Изменяет состояние переключателя и сохраняет на диск."""
+        self.switches[key] = state
+        await self._store_sw.async_save(self.switches)
+        self.async_set_updated_data(self.data)
+        await self.async_request_refresh()
 
     async def _async_update_data(self) -> dict:
         now_local = dt_util.now()
@@ -86,14 +110,67 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             "debian_upgrade_history": self._upgrade_history,
         }
 
-        data.update(await self._check_debian_with_timeout())
-        data.update(await self._check_program_with_timeout())
+        # Проверка Debian (только если включен switch)
+        if self.switches.get(SWITCH_CHECK_DEBIAN, True):
+            data.update(await self._check_debian_with_timeout())
+        else:
+            data.update({
+                "debian_current": "disabled",
+                "debian_latest": "disabled",
+                "debian_update_available": False,
+                "apt_pending_count": 0,
+                "apt_pending_packages": [],
+                "debian_error": "Проверка отключена",
+            })
+
+        # Проверка приложения (только если включен switch)
+        if self.switches.get(SWITCH_CHECK_APP, True):
+            data.update(await self._check_program_with_timeout())
+        else:
+            key = self.app
+            cached = self._last_known_versions.get(key)
+            data.update({
+                f"{key}_current": cached,
+                f"{key}_latest": None,
+                f"{key}_update_available": False,
+                f"{key}_error": "Проверка отключена",
+            })
 
         data["update_available"] = (
             data.get("debian_update_available", False)
             or data.get(f"{self.app}_update_available", False)
         )
+
+        # Автоматическая установка (если включено)
+        if data.get("debian_update_available") and self.switches.get(SWITCH_AUTO_INSTALL_DEBIAN) and not self._installing_debian:
+            self._installing_debian = True
+            self.hass.async_create_task(self._run_auto_install_debian())
+
+        if data.get(f"{self.app}_update_available") and self.switches.get(SWITCH_AUTO_INSTALL_APP) and not self._installing_app:
+            self._installing_app = True
+            self.hass.async_create_task(self._run_auto_install_app())
+
         return data
+
+    async def _run_auto_install_debian(self) -> None:
+        try:
+            from .update import install_debian
+            _LOGGER.info("Auto-installing Debian update for %s", self.host)
+            await install_debian(self.hass, self.entry, self)
+        except Exception as ex:
+            _LOGGER.error("Auto-install Debian failed: %s", ex)
+        finally:
+            self._installing_debian = False
+
+    async def _run_auto_install_app(self) -> None:
+        try:
+            from .update import install_app
+            _LOGGER.info("Auto-installing app update for %s", self.host)
+            await install_app(self.hass, self.entry, self)
+        except Exception as ex:
+            _LOGGER.error("Auto-install app failed: %s", ex)
+        finally:
+            self._installing_app = False
 
     async def _check_debian_with_timeout(self) -> dict:
         try:
@@ -170,7 +247,6 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             if adapter.version_url_path:
                 current_raw = await adapter.get_local_version(self.session, self.host, adapter.default_port)
                 if key == "torrserver":
-                    # Вытаскиваем версию из HTML страницы (MatriX.150 или Silo.2)
                     match = re.search(r'(MatriX\.\d+|Silo\.\d+|\d+\.\d+\.\d+)', current_raw)
                     current = match.group(1) if match else "unknown"
                 elif key == "frigate":

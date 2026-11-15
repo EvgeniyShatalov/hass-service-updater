@@ -12,13 +12,13 @@ from homeassistant.helpers.event import async_track_time_change
 from .const import (
     ATTR_ENTRY_ID, ATTR_HOST, CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS,
     DOMAIN, SERVICE_INSTALL_APP, SERVICE_INSTALL_DEBIAN,
-    INSTALL_DEBIAN_TIMEOUT, INSTALL_APP_TIMEOUT, CONF_CHECK_TIME, CONF_CHECK_MODE,
+    INSTALL_DEBIAN_TIMEOUT, INSTALL_APP_TIMEOUT, CONF_CHECK_TIME,
 )
 from .coordinator import ServiceUpdaterCoordinator
 from .update import install_app, install_debian
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.UPDATE, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON]
+PLATFORMS = [Platform.UPDATE, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SWITCH]
 
 SERVICE_SCHEMA = vol.Schema({
     vol.Optional(ATTR_ENTRY_ID): cv.string,
@@ -78,16 +78,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    check_mode = entry.options.get(CONF_CHECK_MODE, "interval")
+    interval_hours = entry.options.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
+    check_time = entry.options.get(CONF_CHECK_TIME)
     
-    if check_mode == "time":
-        check_time = entry.options.get(CONF_CHECK_TIME)
-        interval_hours = None
-    else:
-        check_time = None
-        interval_hours = entry.options.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
+    if check_time: interval_hours = None
 
-    coordinator = ServiceUpdaterCoordinator(hass, entry.data, interval_hours, check_time)
+    coordinator = ServiceUpdaterCoordinator(hass, entry, interval_hours, check_time)
     
     await coordinator.async_load_history()
     await coordinator.async_config_entry_first_refresh()

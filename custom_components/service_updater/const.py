@@ -8,13 +8,26 @@ CONF_SSH_PORT = "ssh_port"
 CONF_COMPOSE_DIR = "compose_dir"
 CONF_SCAN_INTERVAL_HOURS = "scan_interval_hours"
 CONF_CHECK_TIME = "check_time"
-CONF_CHECK_MODE = "check_mode" # НОВОЕ
+CONF_CHECK_MODE = "check_mode"
 
 MODE_INTERVAL = "interval"
 MODE_TIME = "time"
 
 SERVICE_INSTALL_DEBIAN = "install_debian"
 SERVICE_INSTALL_APP = "install_app"
+
+# Ключи для переключателей (Switch)
+SWITCH_CHECK_DEBIAN = "check_debian"
+SWITCH_CHECK_APP = "check_app"
+SWITCH_AUTO_INSTALL_DEBIAN = "auto_install_debian"
+SWITCH_AUTO_INSTALL_APP = "auto_install_app"
+
+DEFAULT_SWITCHES = {
+    SWITCH_CHECK_DEBIAN: True,
+    SWITCH_CHECK_APP: True,
+    SWITCH_AUTO_INSTALL_DEBIAN: False,
+    SWITCH_AUTO_INSTALL_APP: False,
+}
 
 DEFAULT_SSH_PORT = 22
 DEFAULT_SSH_USER = "root"
