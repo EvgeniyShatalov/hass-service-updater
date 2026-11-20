@@ -245,15 +245,14 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         # 1. Получаем текущую версию
         try:
             if key == "torrserver":
-                # Пытаемся вытащить версию прямо из бинарного файла
+                # Используем звездочку TorrServer*, чтобы найти и обычную сборку, и gst-сборку
                 raw_version = (await self.ssh_exec(
-                    "grep -a -o -E 'Silo\\.[0-9]+|MatriX\\.[0-9]+' /opt/torrserver/TorrServer-linux-amd64 | head -n 1"
+                    "grep -a -o -E 'Silo\\.[0-9]+|MatriX\\.[0-9]+' /opt/torrserver/TorrServer* | head -n 1"
                 )).strip()
                 
                 if raw_version:
                     current = raw_version
                 else:
-                    # Если не удалось, пытаемся через HTTP (вдруг API вернется)
                     current_raw = await adapter.get_local_version(self.session, self.host, adapter.default_port)
                     match = re.search(r'(MatriX\.\d+|Silo\.\d+|\d+\.\d+\.\d+)', current_raw)
                     current = match.group(1) if match else "unknown"
