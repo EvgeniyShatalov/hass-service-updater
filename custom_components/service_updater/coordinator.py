@@ -245,9 +245,9 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         # 1. Получаем текущую версию
         try:
             if key == "torrserver":
-                # Используем звездочку TorrServer*, чтобы найти и обычную сборку, и gst-сборку
+                # Берем ПОСЛЕДНЮЮ найденную версию (tail -n 1 вместо head -n 1)
                 raw_version = (await self.ssh_exec(
-                    "grep -a -o -E 'Silo\\.[0-9]+|MatriX\\.[0-9]+' /opt/torrserver/TorrServer* | head -n 1"
+                    "grep -a -o -E 'Silo\\.[0-9]+|MatriX\\.[0-9]+' /opt/torrserver/TorrServer* | tail -n 1"
                 )).strip()
                 
                 if raw_version:
