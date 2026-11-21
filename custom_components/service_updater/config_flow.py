@@ -15,8 +15,7 @@ from .const import (
     CONF_SSH_PORT, CONF_SSH_USER, DEFAULT_COMPOSE_DIR, DEFAULT_SCAN_INTERVAL_HOURS,
     DEFAULT_SSH_PORT, DEFAULT_SSH_USER, DOMAIN, SCAN_INTERVAL_MAX_HOURS,
     SCAN_INTERVAL_MIN_HOURS, SSH_KEY_DIR, SSH_PRIVATE_KEY, SSH_PUBLIC_KEY,
-    CONF_CHECK_TIME, CONF_CHECK_MODE, MODE_INTERVAL, MODE_TIME,
-    CONF_NOTIFY_ENTITY,
+    CONF_CHECK_TIME, CONF_NOTIFY_ENTITY,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -128,7 +127,7 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_HOST): str,
             vol.Required(CONF_SSH_USER, default=DEFAULT_SSH_USER): str,
             vol.Required(CONF_SSH_PORT, default=DEFAULT_SSH_PORT): int,
-            vol.Optional(CONF_SCAN_INTERVAL_HOURS, default=DEFAULT_SCAN_INTERVAL_HOURS): vol.All(int, vol.Range(min=SCAN_INTERVAL_MIN_HOURS, max=SCAN_INTERVAL_MAX_HOURS)),
+            vol.Optional(CONF_SCAN_INTERVAL_HOURS, default=DEFAULT_SCAN_INTERVAL_HOURS): int,
         })
         return self.async_show_form(step_id="connection", data_schema=schema, errors=errors)
 
@@ -192,9 +191,9 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None) -> FlowResult:
-        """Шаг 1: Основные параметры (IP, порт, уведомления, режим проверки)."""
+        """Единый экран настроек."""
         if user_input is not None:
-            # Обновляем базовые данные
+            # Обновляем базовые данные (IP, порт)
             new_data = {
                 **self.config_entry.data,
                 CONF_HOST: user_input[CONF_HOST],
@@ -203,28 +202,45 @@ class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
             }
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
 
-            self._mode = user_input.get(CONF_CHECK_MODE, MODE_INTERVAL)
-            self._notify_entity = user_input.get(CONF_NOTIFY_ENTITY) or None
-            return await self.async_step_settings()
+            # Сохраняем опции
+            options_data = {
+                CONF_SCAN_INTERVAL_HOURS: user_input.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS),
+                CONF_CHECK_TIME: user_input.get(CONF_CHECK_TIME) or None,
+                CONF_NOTIFY_ENTITY: user_input.get(CONF_NOTIFY_ENTITY) or None,
+            }
+            return self.async_create_entry(title="", data=options_data)
 
+        # Текущие значения
         current_host = self.config_entry.data.get(CONF_HOST, "")
         current_port = self.config_entry.data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT)
         current_user = self.config_entry.data.get(CONF_SSH_USER, DEFAULT_SSH_USER)
-        current_mode = self.config_entry.options.get(CONF_CHECK_MODE, MODE_INTERVAL)
         current_notify = self.config_entry.options.get(CONF_NOTIFY_ENTITY)
+        current_interval = self.config_entry.options.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
+        current_time = self.config_entry.options.get(CONF_CHECK_TIME)
 
         schema_dict = {
             vol.Required(CONF_HOST, default=current_host): str,
             vol.Required(CONF_SSH_PORT, default=current_port): int,
             vol.Required(CONF_SSH_USER, default=current_user): str,
-            vol.Required(CONF_CHECK_MODE, default=current_mode): vol.In({
-                MODE_INTERVAL: "По интервалу",
-                MODE_TIME: "В конкретное время",
-            }),
             vol.Optional(
                 CONF_NOTIFY_ENTITY,
                 description={"suggested_value": current_notify},
             ): selector.EntitySelector(selector.EntitySelectorConfig(domain="notify")),
+            
+            # Текстовое поле для интервала (вместо слайдера)
+            vol.Required(CONF_SCAN_INTERVAL_HOURS, default=current_interval): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=SCAN_INTERVAL_MIN_HOURS, 
+                    max=SCAN_INTERVAL_MAX_HOURS, 
+                    mode=selector.NumberSelectorMode.BOX
+                )
+            ),
+            
+            # Необязательное поле для точного времени
+            vol.Optional(
+                CONF_CHECK_TIME,
+                description={"suggested_value": current_time},
+            ): selector.TimeSelector(),
         }
 
         return self.async_show_form(
@@ -232,21 +248,3 @@ class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
             description_placeholders={"host": current_host},
             data_schema=vol.Schema(schema_dict),
         )
-
-    async def async_step_settings(self, user_input=None) -> FlowResult:
-        """Шаг 2: Периодичность."""
-        if user_input is not None:
-            return self.async_create_entry(
-                title="",
-                data={**user_input, CONF_CHECK_MODE: self._mode, CONF_NOTIFY_ENTITY: self._notify_entity},
-            )
-
-        schema_dict = {}
-        if self._mode == MODE_INTERVAL:
-            current_interval = self.config_entry.options.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
-            schema_dict[vol.Required(CONF_SCAN_INTERVAL_HOURS, default=current_interval)] = vol.All(int, vol.Range(min=SCAN_INTERVAL_MIN_HOURS, max=SCAN_INTERVAL_MAX_HOURS))
-        else:
-            current_time = self.config_entry.options.get(CONF_CHECK_TIME)
-            schema_dict[vol.Required(CONF_CHECK_TIME, default=current_time or "03:00:00")] = selector.TimeSelector()
-
-        return self.async_show_form(step_id="settings", data_schema=vol.Schema(schema_dict))
