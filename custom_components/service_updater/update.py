@@ -1,5 +1,6 @@
 """Платформа Update + функции установки для сервисов."""
 from __future__ import annotations
+
 import asyncio
 import io
 import zipfile
@@ -17,12 +18,51 @@ from .adapters import ADAPTERS
 from .const import (
     CONF_APP, CONF_COMPOSE_DIR, CONF_HOST, CONF_SSH_PORT, CONF_SSH_USER,
     DEFAULT_COMPOSE_DIR, DEFAULT_SSH_PORT, DOMAIN,
-    SSH_KEY_DIR, SSH_PRIVATE_KEY,
+    SSH_KEY_DIR, SSH_PRIVATE_KEY, CONF_NOTIFY_ENTITY,
 )
 from .coordinator import ServiceUpdaterCoordinator
 
+import logging
+_LOGGER = logging.getLogger(__name__)
+
+
 def _key_path(hass: HomeAssistant) -> str:
     return str(hass.config.path(SSH_KEY_DIR, SSH_PRIVATE_KEY))
+
+
+async def _send_notify(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    title: str,
+    message: str,
+    notification_id: str,
+) -> None:
+    """Отправляет уведомление в HA и, если настроено, во внешний сервис."""
+    # 1. Всегда показываем в HA
+    persistent_notification.async_create(
+        hass,
+        message,
+        title=f"Service Updater: {title}",
+        notification_id=notification_id,
+    )
+
+    # 2. Опционально — во внешний сервис (Telegram, VK и т.д.)
+    notify_entity = entry.options.get(CONF_NOTIFY_ENTITY)
+    if not notify_entity:
+        return
+
+    try:
+        await hass.services.async_call(
+            "notify", "send_message",
+            {
+                "entity_id": notify_entity,
+                "message": f"**{title}**\n\n{message}",
+            },
+            blocking=False,
+        )
+    except Exception as ex:  # noqa: BLE001
+        _LOGGER.warning("Не удалось отправить в %s: %s", notify_entity, ex)
+
 
 async def ssh_exec(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, timeout: int = 60) -> str:
     ssh_user = entry.data.get(CONF_SSH_USER, "root")
@@ -40,46 +80,45 @@ async def ssh_exec(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, tim
         raise HomeAssistantError(f"SSH {host}: {err.decode(errors='ignore').strip()}")
     return out.decode(errors="ignore")
 
+
 async def install_debian(hass: HomeAssistant, entry: ConfigEntry, coordinator: ServiceUpdaterCoordinator) -> None:
     host = entry.data.get(CONF_HOST)
     data = coordinator.data or {}
     if not data.get("debian_update_available"):
         return
-        
+
     packages = data.get("apt_pending_packages", [])
-    
     try:
         await ssh_exec(hass, entry, "sudo -n DEBIAN_FRONTEND=noninteractive apt-get upgrade -y", timeout=600)
         coordinator.record_debian_upgrade(packages)
-        persistent_notification.async_create(
-            hass,
-            f"Система **Debian** на хосте `{host}` успешно обновлена.\nОбновлено пакетов: {len(packages)}.",
-            title="Service Updater: Успех",
-            notification_id=f"update_success_debian_{host}"
+        await _send_notify(
+            hass, entry,
+            title="Debian обновлён",
+            message=f"Хост: `{host}`\nУстановлено пакетов: {len(packages)}",
+            notification_id=f"update_success_debian_{host}",
         )
     except Exception as e:
-        persistent_notification.async_create(
-            hass,
-            f"Ошибка обновления **Debian** на хосте `{host}`:\n```\n{e}\n```",
-            title="Service Updater: Ошибка",
-            notification_id=f"update_error_debian_{host}"
+        await _send_notify(
+            hass, entry,
+            title="Ошибка обновления Debian",
+            message=f"Хост: `{host}`\n```\n{e}\n```",
+            notification_id=f"update_error_debian_{host}",
         )
         raise
     finally:
         await coordinator.async_refresh()
 
+
 async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: ServiceUpdaterCoordinator) -> None:
     app = entry.data.get(CONF_APP, "")
     host = entry.data.get(CONF_HOST)
     data = coordinator.data or {}
-    
     if not data.get(f"{app}_update_available"):
         return
 
     adapter = ADAPTERS[app]
     latest = data.get(f"{app}_latest")
     old_version = data.get(f"{app}_current", "неизвестно")
-    
     if not latest:
         raise HomeAssistantError(f"Неизвестная последняя версия {app}")
 
@@ -91,7 +130,6 @@ async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: Serv
             )
             await ssh_exec(hass, entry, remote_cmd, timeout=300)
             await asyncio.sleep(15)
-
         elif app == "frigate":
             compose_dir = entry.data.get(CONF_COMPOSE_DIR, DEFAULT_COMPOSE_DIR)
             backup = f"tar czf {compose_dir}/config-backup-$(date +%F-%H%M).tar.gz -C {compose_dir} config 2>/dev/null || true"
@@ -99,32 +137,29 @@ async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: Serv
             remote = f"cd {compose_dir} && docker compose down frigate && docker compose pull && docker compose up -d"
             await ssh_exec(hass, entry, remote, timeout=900)
             await asyncio.sleep(10)
-
         elif app == "cloudpub":
             await ssh_exec(hass, entry, "sudo /usr/local/bin/clo upgrade", timeout=300)
             await asyncio.sleep(10)
-
         else:
             raise HomeAssistantError(f"Неизвестное приложение {app}")
 
-        persistent_notification.async_create(
-            hass,
-            f"Приложение **{app.capitalize()}** на хосте `{host}` успешно обновлено.\n"
-            f"Версия: `{old_version}` ➔ `{latest}`",
-            title="Service Updater: Успех",
-            notification_id=f"update_success_{app}_{host}"
+        await _send_notify(
+            hass, entry,
+            title=f"{app.capitalize()} обновлён",
+            message=f"Хост: `{host}`\nВерсия: `{old_version}` ➔ `{latest}`",
+            notification_id=f"update_success_{app}_{host}",
         )
-
     except Exception as e:
-        persistent_notification.async_create(
-            hass,
-            f"Ошибка обновления **{app.capitalize()}** на хосте `{host}`:\n```\n{e}\n```",
-            title="Service Updater: Ошибка",
-            notification_id=f"update_error_{app}_{host}"
+        await _send_notify(
+            hass, entry,
+            title=f"Ошибка обновления {app.capitalize()}",
+            message=f"Хост: `{host}`\n```\n{e}\n```",
+            notification_id=f"update_error_{app}_{host}",
         )
         raise
     finally:
         await coordinator.async_refresh()
+
 
 def _extract_from_zip(content: bytes, pattern: str) -> bytes:
     needle = pattern.split(".")[0].lower()
@@ -134,9 +169,11 @@ def _extract_from_zip(content: bytes, pattern: str) -> bytes:
             raise HomeAssistantError("Бинарник не найден в архиве")
         return zf.read(member)
 
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator: ServiceUpdaterCoordinator = entry.runtime_data
     async_add_entities([ServiceUpdaterUpdateEntity(coordinator, entry)])
+
 
 class ServiceUpdaterUpdateEntity(CoordinatorEntity[ServiceUpdaterCoordinator], UpdateEntity):
     _attr_has_entity_name = True
@@ -171,5 +208,4 @@ class ServiceUpdaterUpdateEntity(CoordinatorEntity[ServiceUpdaterCoordinator], U
         return (self.coordinator.data or {}).get(f"{self._app}_release_url")
 
     async def async_release_notes(self) -> str | None:
-        # Возвращаем текст Changelog'а
         return (self.coordinator.data or {}).get(f"{self._app}_release_notes", "Нет данных")

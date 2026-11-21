@@ -9,6 +9,7 @@ CONF_COMPOSE_DIR = "compose_dir"
 CONF_SCAN_INTERVAL_HOURS = "scan_interval_hours"
 CONF_CHECK_TIME = "check_time"
 CONF_CHECK_MODE = "check_mode"
+CONF_NOTIFY_ENTITY = "notify_entity"  # <-- НОВОЕ
 
 MODE_INTERVAL = "interval"
 MODE_TIME = "time"
@@ -16,7 +17,6 @@ MODE_TIME = "time"
 SERVICE_INSTALL_DEBIAN = "install_debian"
 SERVICE_INSTALL_APP = "install_app"
 
-# Ключи для переключателей (Switch)
 SWITCH_CHECK_DEBIAN = "check_debian"
 SWITCH_CHECK_APP = "check_app"
 SWITCH_AUTO_INSTALL_DEBIAN = "auto_install_debian"

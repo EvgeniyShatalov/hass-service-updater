@@ -15,15 +15,18 @@ from .const import (
     CONF_SSH_PORT, CONF_SSH_USER, DEFAULT_COMPOSE_DIR, DEFAULT_SCAN_INTERVAL_HOURS,
     DEFAULT_SSH_PORT, DEFAULT_SSH_USER, DOMAIN, SCAN_INTERVAL_MAX_HOURS,
     SCAN_INTERVAL_MIN_HOURS, SSH_KEY_DIR, SSH_PRIVATE_KEY, SSH_PUBLIC_KEY,
-    CONF_CHECK_TIME, CONF_CHECK_MODE, MODE_INTERVAL, MODE_TIME
+    CONF_CHECK_TIME, CONF_CHECK_MODE, MODE_INTERVAL, MODE_TIME,
+    CONF_NOTIFY_ENTITY,
 )
 
 _LOGGER = logging.getLogger(__name__)
 APPS = {"torrserver": "TorrServer", "cloudpub": "CloudPub", "frigate": "Frigate (Docker)"}
 
+
 def _key_paths(hass) -> tuple[Path, Path]:
     base = Path(hass.config.path(SSH_KEY_DIR))
     return base / SSH_PRIVATE_KEY, base / SSH_PUBLIC_KEY
+
 
 async def _generate_keypair(hass) -> str:
     priv, pub = _key_paths(hass)
@@ -38,12 +41,14 @@ async def _generate_keypair(hass) -> str:
     priv.chmod(0o600)
     return pub.read_text()
 
+
 async def _ping_host(host: str) -> bool:
     try:
         proc = await asyncio.create_subprocess_exec("ping", "-c", "1", "-W", "2", host, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await asyncio.wait_for(proc.communicate(), timeout=5)
         return proc.returncode == 0
     except Exception: return False
+
 
 async def _tcp_check(host: str, port: int) -> bool:
     try:
@@ -52,6 +57,7 @@ async def _tcp_check(host: str, port: int) -> bool:
         await writer.wait_closed()
         return True
     except Exception: return False
+
 
 async def _ssh_key_auth(host: str, port: int, user: str, key: Path) -> bool:
     try:
@@ -63,6 +69,7 @@ async def _ssh_key_auth(host: str, port: int, user: str, key: Path) -> bool:
         await asyncio.wait_for(proc.communicate(), timeout=10)
         return proc.returncode == 0
     except Exception: return False
+
 
 class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -185,10 +192,9 @@ class ServiceUpdaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None) -> FlowResult:
-        errors: dict[str, str] = {}
-        
+        """Шаг 1: Основные параметры (IP, порт, уведомления, режим проверки)."""
         if user_input is not None:
-            # Обновляем базовые данные (IP, порт, пользователь)
+            # Обновляем базовые данные
             new_data = {
                 **self.config_entry.data,
                 CONF_HOST: user_input[CONF_HOST],
@@ -196,36 +202,46 @@ class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
                 CONF_SSH_USER: user_input[CONF_SSH_USER],
             }
             self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
-            
-            # Сохраняем опции (режим и время/интервал)
+
             self._mode = user_input.get(CONF_CHECK_MODE, MODE_INTERVAL)
+            self._notify_entity = user_input.get(CONF_NOTIFY_ENTITY) or None
             return await self.async_step_settings()
 
         current_host = self.config_entry.data.get(CONF_HOST, "")
         current_port = self.config_entry.data.get(CONF_SSH_PORT, DEFAULT_SSH_PORT)
         current_user = self.config_entry.data.get(CONF_SSH_USER, DEFAULT_SSH_USER)
         current_mode = self.config_entry.options.get(CONF_CHECK_MODE, MODE_INTERVAL)
+        current_notify = self.config_entry.options.get(CONF_NOTIFY_ENTITY)
+
+        schema_dict = {
+            vol.Required(CONF_HOST, default=current_host): str,
+            vol.Required(CONF_SSH_PORT, default=current_port): int,
+            vol.Required(CONF_SSH_USER, default=current_user): str,
+            vol.Required(CONF_CHECK_MODE, default=current_mode): vol.In({
+                MODE_INTERVAL: "По интервалу",
+                MODE_TIME: "В конкретное время",
+            }),
+            vol.Optional(
+                CONF_NOTIFY_ENTITY,
+                description={"suggested_value": current_notify},
+            ): selector.EntitySelector(selector.EntitySelectorConfig(domain="notify")),
+        }
 
         return self.async_show_form(
             step_id="init",
             description_placeholders={"host": current_host},
-            data_schema=vol.Schema({
-                vol.Required(CONF_HOST, default=current_host): str,
-                vol.Required(CONF_SSH_PORT, default=current_port): int,
-                vol.Required(CONF_SSH_USER, default=current_user): str,
-                vol.Required(CONF_CHECK_MODE, default=current_mode): vol.In({
-                    MODE_INTERVAL: "По интервалу",
-                    MODE_TIME: "В конкретное время"
-                })
-            })
+            data_schema=vol.Schema(schema_dict),
         )
 
     async def async_step_settings(self, user_input=None) -> FlowResult:
+        """Шаг 2: Периодичность."""
         if user_input is not None:
-            return self.async_create_entry(title="", data={**user_input, CONF_CHECK_MODE: self._mode})
+            return self.async_create_entry(
+                title="",
+                data={**user_input, CONF_CHECK_MODE: self._mode, CONF_NOTIFY_ENTITY: self._notify_entity},
+            )
 
         schema_dict = {}
-        
         if self._mode == MODE_INTERVAL:
             current_interval = self.config_entry.options.get(CONF_SCAN_INTERVAL_HOURS, DEFAULT_SCAN_INTERVAL_HOURS)
             schema_dict[vol.Required(CONF_SCAN_INTERVAL_HOURS, default=current_interval)] = vol.All(int, vol.Range(min=SCAN_INTERVAL_MIN_HOURS, max=SCAN_INTERVAL_MAX_HOURS))
@@ -233,7 +249,4 @@ class ServiceUpdaterOptionsFlow(config_entries.OptionsFlow):
             current_time = self.config_entry.options.get(CONF_CHECK_TIME)
             schema_dict[vol.Required(CONF_CHECK_TIME, default=current_time or "03:00:00")] = selector.TimeSelector()
 
-        return self.async_show_form(
-            step_id="settings",
-            data_schema=vol.Schema(schema_dict)
-        )
+        return self.async_show_form(step_id="settings", data_schema=vol.Schema(schema_dict))
