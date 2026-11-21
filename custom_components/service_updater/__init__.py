@@ -18,7 +18,15 @@ from .coordinator import ServiceUpdaterCoordinator
 from .update import install_app, install_debian
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.UPDATE, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SWITCH]
+PLATFORMS = [
+    Platform.UPDATE, 
+    Platform.SENSOR, 
+    Platform.BINARY_SENSOR, 
+    Platform.BUTTON, 
+    Platform.SWITCH,
+    Platform.NUMBER,  # <-- Новое
+    Platform.TIME,    # <-- Новое
+]
 
 SERVICE_SCHEMA = vol.Schema({
     vol.Optional(ATTR_ENTRY_ID): cv.string,
