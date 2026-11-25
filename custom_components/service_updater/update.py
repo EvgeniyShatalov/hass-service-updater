@@ -81,9 +81,11 @@ async def ssh_exec(hass: HomeAssistant, entry: ConfigEntry, remote_cmd: str, tim
     return out.decode(errors="ignore")
 
 
-async def install_debian(hass: HomeAssistant, entry: ConfigEntry, coordinator: ServiceUpdaterCoordinator) -> None:
+async def install_debian(hass: HomeAssistant, entry: ConfigEntry, coordinator: ServiceUpdaterCoordinator, data: dict = None) -> None:
     host = entry.data.get(CONF_HOST)
-    data = coordinator.data or {}
+    if data is None:
+        data = coordinator.data or {}
+        
     if not data.get("debian_update_available"):
         return
 
@@ -109,10 +111,13 @@ async def install_debian(hass: HomeAssistant, entry: ConfigEntry, coordinator: S
         await coordinator.async_refresh()
 
 
-async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: ServiceUpdaterCoordinator) -> None:
+async def install_app(hass: HomeAssistant, entry: ConfigEntry, coordinator: ServiceUpdaterCoordinator, data: dict = None) -> None:
     app = entry.data.get(CONF_APP, "")
     host = entry.data.get(CONF_HOST)
-    data = coordinator.data or {}
+    
+    if data is None:
+        data = coordinator.data or {}
+        
     if not data.get(f"{app}_update_available"):
         return
 

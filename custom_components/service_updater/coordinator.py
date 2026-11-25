@@ -115,12 +115,9 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             data.update(await self._check_debian_with_timeout())
         else:
             data.update({
-                "debian_current": "disabled",
-                "debian_latest": "disabled",
-                "debian_update_available": False,
-                "apt_pending_count": 0,
-                "apt_pending_packages": [],
-                "debian_error": "Проверка отключена",
+                "debian_current": "disabled", "debian_latest": "disabled",
+                "debian_update_available": False, "apt_pending_count": 0,
+                "apt_pending_packages": [], "debian_error": "Проверка отключена",
             })
 
         # Проверка приложения (только если включен switch)
@@ -130,10 +127,8 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             key = self.app
             cached = self._last_known_versions.get(key)
             data.update({
-                f"{key}_current": cached,
-                f"{key}_latest": None,
-                f"{key}_update_available": False,
-                f"{key}_error": "Проверка отключена",
+                f"{key}_current": cached, f"{key}_latest": None,
+                f"{key}_update_available": False, f"{key}_error": "Проверка отключена",
             })
 
         data["update_available"] = (
@@ -141,36 +136,75 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             or data.get(f"{self.app}_update_available", False)
         )
 
-        # Автоматическая установка (если включено)
+        # Автоматическая установка (с передачей свежих данных для избежания Race Condition)
         if data.get("debian_update_available") and self.switches.get(SWITCH_AUTO_INSTALL_DEBIAN) and not self._installing_debian:
             self._installing_debian = True
-            self.hass.async_create_task(self._run_auto_install_debian())
+            self.hass.async_create_task(self._run_auto_install_debian(data))
 
         if data.get(f"{self.app}_update_available") and self.switches.get(SWITCH_AUTO_INSTALL_APP) and not self._installing_app:
             self._installing_app = True
-            self.hass.async_create_task(self._run_auto_install_app())
+            self.hass.async_create_task(self._run_auto_install_app(data))
 
         return data
 
-    async def _run_auto_install_debian(self) -> None:
+    async def _run_auto_install_debian(self, data: dict) -> None:
         try:
             from .update import install_debian
             _LOGGER.info("Auto-installing Debian update for %s", self.host)
-            await install_debian(self.hass, self.entry, self)
+            packages = data.get("apt_pending_packages", [])
+            count = len(packages)
+            
+            await install_debian(self.hass, self.entry, self, data)
+            
+            await self._send_notification(
+                f"✅ **Debian обновлён** на хосте `{self.host}`\n"
+                f"Установлено пакетов: {count}"
+            )
         except Exception as ex:
             _LOGGER.error("Auto-install Debian failed: %s", ex)
+            await self._send_notification(
+                f"❌ **Ошибка обновления Debian** на хосте `{self.host}`\n"
+                f"```\n{ex}\n```"
+            )
         finally:
             self._installing_debian = False
 
-    async def _run_auto_install_app(self) -> None:
+    async def _run_auto_install_app(self, data: dict) -> None:
         try:
             from .update import install_app
             _LOGGER.info("Auto-installing app update for %s", self.host)
-            await install_app(self.hass, self.entry, self)
+            
+            old_ver = data.get(f"{self.app}_current", "?")
+            new_ver = data.get(f"{self.app}_latest", "?")
+            
+            await install_app(self.hass, self.entry, self, data)
+            
+            await self._send_notification(
+                f"✅ **{self.adapter.title} обновлён** на хосте `{self.host}`\n"
+                f"Версия: `{old_ver}` ➔ `{new_ver}`"
+            )
         except Exception as ex:
             _LOGGER.error("Auto-install app failed: %s", ex)
+            await self._send_notification(
+                f"❌ **Ошибка обновления {self.adapter.title}** на хосте `{self.host}`\n"
+                f"```\n{ex}\n```"
+            )
         finally:
             self._installing_app = False
+
+    async def _send_notification(self, message: str) -> None:
+        """Отправляет уведомление во внешний сервис (если настроен)."""
+        notify_entity = self.entry.options.get("notify_entity")
+        if not notify_entity:
+            return
+        try:
+            await self.hass.services.async_call(
+                "notify", "send_message",
+                {"entity_id": notify_entity, "message": message},
+                blocking=False,
+            )
+        except Exception as ex:
+            _LOGGER.warning("Не удалось отправить в %s: %s", notify_entity, ex)
 
     async def _check_debian_with_timeout(self) -> dict:
         try:
@@ -179,8 +213,7 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             return {
                 "debian_current": "error", "debian_latest": "error",
                 "debian_update_available": False, "apt_pending_count": 0,
-                "apt_pending_packages": [], "debian_error": "timeout",
-                "debian_timeout": True,
+                "apt_pending_packages": [], "debian_error": "timeout", "debian_timeout": True,
             }
         except Exception as ex:
             return {
@@ -202,8 +235,7 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
     def _get_fallback_result(self, key: str, error_msg: str) -> dict:
         last_ver = self._last_known_versions.get(key)
         return {
-            f"{key}_current": last_ver,
-            f"{key}_latest": None,
+            f"{key}_current": last_ver, f"{key}_latest": None,
             f"{key}_update_available": False,
             f"{key}_error": f"{error_msg} (из кэша)" if last_ver else error_msg,
             "program_timeout": True
@@ -212,7 +244,6 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
     async def _check_debian(self) -> dict:
         remote = "sudo -n apt-get update -qq && apt list --upgradable 2>/dev/null"
         out = await self.ssh_exec(remote, timeout=90)
-
         pending: list[dict] = []
         for line in out.splitlines():
             line = line.strip()
@@ -223,7 +254,6 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             new_ver = parts[1]
             old_ver = line.split("upgradable from:")[1].strip(" ]") if "upgradable from:" in line else ""
             pending.append({"package": name, "new_version": new_ver, "old_version": old_ver})
-
         count = len(pending)
         status = "up-to-date" if count == 0 else f"{count} pending"
         return {
@@ -242,14 +272,11 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         release_notes = "Описание изменений недоступно."
         error_msg = None
 
-        # 1. Получаем текущую версию
         try:
             if key == "torrserver":
-                # Берем ПОСЛЕДНЮЮ найденную версию (tail -n 1 вместо head -n 1)
                 raw_version = (await self.ssh_exec(
                     "grep -a -o -E 'Silo\\.[0-9]+|MatriX\\.[0-9]+' /opt/torrserver/TorrServer* | tail -n 1"
                 )).strip()
-                
                 if raw_version:
                     current = raw_version
                 else:
@@ -278,42 +305,33 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
             if current:
                 error_msg = f"{error_msg} (показана из кэша)" if error_msg else "Показана из кэша"
 
-        # 2. Получаем последнюю версию
         try:
             if key == "cloudpub":
                 release_url = "https://cloudpub.ru/download/"
                 release_notes = "Команда `clo upgrade` загружает и устанавливает последнюю стабильную версию с официального сервера CloudPub."
-                
                 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
                 try:
                     url = "https://cloudpub.ru/download/stable/clo-latest-stable-linux-x86_64.tar.gz"
                     async with self.session.get(url, allow_redirects=True, headers=headers, timeout=15) as resp:
                         cd = resp.headers.get("Content-Disposition", "")
                         match = re.search(r'clo-(\d+\.\d+\.\d+)-', cd)
-                        if match:
-                            latest = match.group(1)
+                        if match: latest = match.group(1)
                         else:
                             match = re.search(r'clo-(\d+\.\d+\.\d+)-', str(resp.url))
-                            if match:
-                                latest = match.group(1)
+                            if match: latest = match.group(1)
                 except Exception as ex:
-                    _LOGGER.debug("Не удалось прочитать заголовки при скачивании: %s", ex)
-                
+                    _LOGGER.debug("Не удалось прочитать заголовки: %s", ex)
                 if not latest:
                     try:
                         async with self.session.get("https://cloudpub.ru/", headers=headers, timeout=10) as resp:
                             if resp.status == 200:
                                 html = await resp.text()
                                 match = re.search(r'clo-(\d+\.\d+\.\d+)-stable', html)
-                                if not match:
-                                    match = re.search(r'CLOUDPUB\s+(\d+\.\d+\.\d+)', html)
-                                if match:
-                                    latest = match.group(1)
+                                if not match: match = re.search(r'CLOUDPUB\s+(\d+\.\d+\.\d+)', html)
+                                if match: latest = match.group(1)
                     except Exception as ex:
-                        _LOGGER.debug("Не удалось спарсить главную страницу: %s", ex)
-                
-                if not latest:
-                    latest = current
+                        _LOGGER.debug("Не удалось спарсить: %s", ex)
+                if not latest: latest = current
             else:
                 api = f"https://api.github.com/repos/{adapter.github_repo}/releases/latest"
                 async with self.session.get(api, timeout=10) as resp:
@@ -323,12 +341,11 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
                         latest_match = re.search(r'(MatriX\.\d+|Silo\.\d+|\d+\.\d+\.\d+)', latest_tag)
                         latest = latest_match.group(1) if latest_match else latest_tag
                         release_url = rel.get("html_url")
-                        release_notes = rel.get("body") or "Разработчик не приложил описание к этому релизу."
+                        release_notes = rel.get("body") or "Разработчик не приложил описание."
                         release_notes = release_notes[:3000]
         except Exception as ex:
             _LOGGER.warning("Не удалось получить последнюю версию %s: %s", key, ex)
-            if not error_msg:
-                error_msg = f"Ошибка GitHub: {ex}"
+            if not error_msg: error_msg = f"Ошибка GitHub: {ex}"
 
         result[f"{key}_current"] = current
         result[f"{key}_release_url"] = release_url
@@ -343,7 +360,6 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         else:
             result[f"{key}_update_available"] = False
             result[f"{key}_latest"] = None
-
         return result
 
     async def ssh_exec(self, remote_cmd: str, timeout: int = 30) -> str:
@@ -358,8 +374,7 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         if proc.returncode != 0:
             err_text = err.decode(errors="ignore").strip()
             out_text = out.decode(errors="ignore").strip()
-            if out_text:
-                return out_text
+            if out_text: return out_text
             raise UpdateFailed(err_text or "SSH error")
         return out.decode(errors="ignore")
 
@@ -369,12 +384,9 @@ class ServiceUpdaterCoordinator(DataUpdateCoordinator[dict]):
         self._upgrade_history.append(entry)
         if len(self._upgrade_history) > 5:
             self._upgrade_history = self._upgrade_history[-5:]
-            
         self.hass.async_create_task(self._store_hist.async_save({
-            "last_upgrade": self._last_debian_upgrade,
-            "history": self._upgrade_history
+            "last_upgrade": self._last_debian_upgrade, "history": self._upgrade_history
         }))
-        
         self.async_set_updated_data({
             **(self.data or {}),
             "debian_last_upgrade": self._last_debian_upgrade,
